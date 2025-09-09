@@ -1,0 +1,9 @@
+services:
+  api:
+    build: ./server
+    ports:
+      - "8000:8000"
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - ./server/data:/app/data
