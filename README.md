@@ -1,74 +1,102 @@
-# SMRT Systems Take-Home
+# SMRT Systems Query Intelligence Platform
 
-AI-driven mobile app with CSV-backed Q&A. This repo includes:
+AI-driven mobile app with trustworthy CSV-backed Q&A. Evidence-based answers with no hallucinations.
 
-- `server/`: FastAPI + DuckDB backend (Dockerized)
-- `frontend/`: React Native (Expo) app [planned next]
+## Features
 
-Quick start (backend):
+- 🎯 **Natural Language Queries**: Ask questions in plain English
+- 🔍 **Evidence-Based Answers**: Every response includes SQL, data sources, and sample results
+- 📊 **Visual Reports**: Charts and graphs for data visualization
+- ⚡ **Scalable Architecture**: Handles datasets from 100 to 10M+ rows
+- 🛡️ **SQL Injection Protection**: Safe, validated queries only
+- 📱 **Mobile-First Design**: React Native app for iOS/Android
 
-```
+## Quick Start
+
+### Backend (FastAPI + DuckDB)
+
+**Docker:**
+```bash
 docker compose up --build
 # API at http://localhost:8000
 ```
 
-Or run locally:
-
-```
+**Local Development:**
+```bash
 cd server
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Then refresh the data sources:
-
-```
+**Initialize Data:**
+```bash
 curl -X POST http://localhost:8000/datasource/refresh
 ```
 
-Ask a question (Day 1 vertical slice):
+### Frontend (React Native + Expo)
 
-```
-curl -X POST http://localhost:8000/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"revenue last 30 days","filters":{},"ai_assist":false}'
-
-More examples:
-
-```
-# Top products
-curl -X POST http://localhost:8000/chat -H 'Content-Type: application/json' -d '{"message":"top 5 products"}'
-
-# Orders by customer
-curl -X POST http://localhost:8000/chat -H 'Content-Type: application/json' -d '{"message":"orders for CID 1001"}'
-
-# Order details by IID
-curl -X POST http://localhost:8000/chat -H 'Content-Type: application/json' -d '{"message":"order details IID 2001"}'
-```
-
-Quick test harness:
-
-```
-bash ./test_queries.sh
-
-Frontend (Expo):
-
-```
+```bash
 cd frontend
 npm install
-# If Expo Go on your device is SDK 53, ensure dependencies match:
-npx expo install expo@^53
-# Optionally let Expo align React Native and peers:
-npx expo install
-
+npx expo install expo@^53  # Match SDK version
 npm start
 ```
 
-If you see an SDK mismatch error, upgrade to SDK 53 (as above) or run the iOS Simulator build for SDK 51. Removing the icon asset reference is already handled in app.json.
-```
+Configure backend URL in app settings (e.g., `http://192.168.1.100:8000`)
+
+## Example Queries
+
+```bash
+# Revenue analysis
+curl -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"revenue last 30 days"}'
+
+# Top products
+curl -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"top 5 products"}'
+
+# Customer orders
+curl -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"orders for CID 1001"}'
+
+# Order details
+curl -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"order details IID 2001"}'
 ```
 
-Environment:
+## Testing
 
-- `DATA_DIR` (default: `./server/data`) path to CSVs
+**Run Test Suite:**
+```bash
+cd server
+python run_tests.py
+# Or use the test script:
+bash test_query_logic.sh
+```
+
+**Generate Large Test Data:**
+```bash
+python generate_large_dataset.py 1000  # ~100k orders
+```
+
+**Manual Testing:**
+See `server/tests/MANUAL_TEST_CHECKLIST.md`
+
+## Architecture
+
+- **Intent Detection**: Pattern-based natural language understanding
+- **SQL Generation**: Template-based safe query construction
+- **Query Optimization**: Sampling, caching, and partitioning for scale
+- **Evidence Bundle**: Returns SQL, source tables, row counts, sample data
+- **Confidence Scoring**: Data quality metrics inform trust level
+
+See `server/Approach.md` for detailed technical approach.
+
+## Environment Variables
+
+- `DATA_DIR`: Path to CSV files (default: `./server/data`)

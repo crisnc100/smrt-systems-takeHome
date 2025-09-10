@@ -4,12 +4,34 @@
     "slug": "smrt-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
-    "platforms": ["ios", "android", "web"],
-    "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true },
-    "plugins": ["expo-dev-client"],
-    "runtimeVersion": { "policy": "sdkVersion" },
-    "jsEngine": "jsc",
-    "newArchEnabled": false
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.crisnc100.smrtmobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "buildConfiguration": "Release",
+      "deploymentTarget": "13.4"
+    },
+    "plugins": [
+      "expo-dev-client"
+    ],
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "newArchEnabled": false,
+    "extra": {
+      "eas": {
+        "projectId": "05cf93cb-81ad-43f2-8292-2a7a0d77d76d"
+      }
+    }
   }
 }

@@ -20,15 +20,17 @@ app.add_middleware(
 
 
 # Routers
-from .routers import health, datasource, chat  # noqa: E402
+from .routers import health, datasource, chat, report, debug, analytics  # noqa: E402
 
 app.include_router(health.router)
 app.include_router(datasource.router)
 app.include_router(chat.router)
+app.include_router(report.router)
+app.include_router(debug.router)
+app.include_router(analytics.router)
 
 
 @app.on_event("startup")
 def on_startup():
     # Defer heavy loading to /datasource/refresh to keep startup quick
     pass
-

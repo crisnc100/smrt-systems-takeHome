@@ -45,3 +45,12 @@ export async function refreshData(): Promise<any> {
   return res.json();
 }
 
+export async function callReport(type: 'revenue_by_month' | 'top_customers', filters: any = {}): Promise<any> {
+  const base = await getBaseUrl();
+  const res = await fetch(`${base}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, filters })
+  });
+  return res.json();
+}

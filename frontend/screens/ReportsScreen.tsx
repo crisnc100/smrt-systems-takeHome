@@ -1,9 +1,37 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { Text, Button, SegmentedButtons } from 'react-native-paper';
+import { Text, Button, SegmentedButtons, ActivityIndicator } from 'react-native-paper';
+import { callReport } from '../lib/api';
+import Chart from '../components/Chart';
 
 export default function ReportsScreen() {
   const [tab, setTab] = React.useState<'revenue_by_month' | 'top_customers'>('revenue_by_month');
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [data, setData] = React.useState<any | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await callReport(tab);
+      if (res.error) {
+        setError(res.error);
+        setData(null);
+      } else {
+        setData(res);
+      }
+    } catch (e) {
+      setError(String(e));
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [tab]);
+
+  React.useEffect(() => {
+    load();
+  }, [tab, load]);
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }}>
@@ -17,17 +45,19 @@ export default function ReportsScreen() {
         ]}
         style={{ marginVertical: 12 }}
       />
-      <View style={{ padding: 12, borderRadius: 8, borderColor: '#ddd', borderWidth: 1 }}>
-        <Text>
-          {tab === 'revenue_by_month'
-            ? 'Revenue by Month chart will appear here (coming soon).'
-            : 'Top Customers chart will appear here (coming soon).'}
-        </Text>
-      </View>
+      {loading && <ActivityIndicator />}
+      {error && <Text style={{ color: 'red' }}>{error}</Text>}
+      {data && (
+        <View style={{ padding: 12, borderRadius: 8, borderColor: '#ddd', borderWidth: 1 }}>
+          <Text style={{ marginBottom: 8 }}>{data.summary_text}</Text>
+          {data.charts && data.charts[0] && (
+            <Chart type={data.charts[0].type} series={data.charts[0].series} />
+          )}
+        </View>
+      )}
       <Button mode="outlined" style={{ marginTop: 12 }} disabled>
         Export CSV (coming soon)
       </Button>
     </ScrollView>
   );
 }
-

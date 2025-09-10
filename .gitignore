@@ -34,3 +34,21 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+
+# Test artifacts
+server/tests/__pycache__/
+server/tests/*.pyc
+server/*_large.csv
+server/*_large.parquet
+server/data/*_large.*
+*.test.log
+
+# Development/debugging files
+server/test_data_debug.py
+server/run_tests.py
+server/test_api.py
+
+# Cache files
+*.cache
+.pytest_cache/
+server/.cache/

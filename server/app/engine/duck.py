@@ -3,6 +3,9 @@ from typing import Dict, List, Tuple, Any
 import duckdb
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from functools import lru_cache
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 _CONN = None
@@ -38,21 +41,39 @@ def ensure_views() -> Dict[str, bool]:
     tables = ["Customer", "Inventory", "Detail", "Pricelist"]
     created: Dict[str, bool] = {}
 
+    def _lit(path: str) -> str:
+        # SQL string literal escape for DuckDB
+        return "'" + path.replace("'", "''") + "'"
+
     for t in tables:
         pq = _parquet_path(t)
         csv = _csv_path(t)
         if os.path.exists(pq):
-            con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_parquet(?)", [pq])
+            logger.info(f"Loading {t} from parquet: {pq}")
+            con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_parquet({_lit(pq)})")
+            # Log row count
+            count = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            logger.info(f"  {t}: {count} rows loaded from parquet")
             created[t] = True
         elif os.path.exists(csv):
+            logger.info(f"Loading {t} from CSV: {csv}")
             # Use read_csv_auto for flexible schema inference
             con.execute(
-                f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_csv_auto(?, HEADER TRUE)",
-                [csv],
+                f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_csv_auto({_lit(csv)}, HEADER=TRUE)"
             )
+            # Log row count
+            count = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            logger.info(f"  {t}: {count} rows loaded from CSV")
             created[t] = True
         else:
+            logger.warning(f"No data file found for {t}")
             created[t] = False
+    
+    # Log sample data to verify loading
+    if created.get("Inventory"):
+        sample = con.execute("SELECT * FROM Inventory LIMIT 3").fetchall()
+        logger.info(f"Sample Inventory data: {sample}")
+    
     return created
 
 
@@ -66,9 +87,10 @@ def build_parquet_cache() -> Dict[str, bool]:
         pq = _parquet_path(t)
         if os.path.exists(csv):
             # Always rebuild for simplicity; could skip if pq newer than csv
+            csv_lit = "'" + csv.replace("'", "''") + "'"
+            pq_lit = "'" + pq.replace("'", "''") + "'"
             con.execute(
-                "COPY (SELECT * FROM read_csv_auto(?, HEADER TRUE)) TO ? (FORMAT PARQUET)",
-                [csv, pq],
+                f"COPY (SELECT * FROM read_csv_auto({csv_lit}, HEADER=TRUE)) TO {pq_lit} (FORMAT PARQUET)"
             )
             built[t] = True
         else:
