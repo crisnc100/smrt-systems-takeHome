@@ -94,11 +94,13 @@ def report(req: ReportRequest):
             k = 5
             if req.filters and isinstance(req.filters.get("k"), int):
                 k = max(1, min(1000, req.filters["k"]))
+            # Group by the full expression to avoid binder errors
             sql = (
                 "SELECT COALESCE(Customer.name, CAST(Inventory.CID AS VARCHAR)) AS customer, "
                 "SUM(Inventory.order_total) AS revenue "
                 "FROM Inventory LEFT JOIN Customer ON Customer.CID = Inventory.CID "
-                "GROUP BY customer ORDER BY revenue DESC LIMIT " + str(k)
+                "GROUP BY COALESCE(Customer.name, CAST(Inventory.CID AS VARCHAR)) "
+                "ORDER BY revenue DESC LIMIT " + str(k)
             )
             rows = _run_guarded(sql)
             series = [(str(r[0]), float(r[1]) if r[1] is not None else 0.0) for r in rows]
@@ -179,4 +181,3 @@ def report(req: ReportRequest):
         return {"error": "Unknown report type", "suggestion": "Use 'revenue_by_month', 'top_customers', 'top_products', or 'revenue_trend'"}
     except Exception as e:
         return {"error": str(e), "suggestion": "Adjust filters or try again."}
-

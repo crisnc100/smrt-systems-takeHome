@@ -2,7 +2,7 @@
 
 ## ✅ Project Complete - Core Requirements Met
 
-### Test Results (Jan 2025)
+### Test Results (Sep 2025)
 ```
 ============================================================
 TEST SUMMARY
@@ -89,6 +89,7 @@ server/
 # 1. Start the backend
 cd server
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
 
 # 2. Run the test suite
 python test_query_api.py

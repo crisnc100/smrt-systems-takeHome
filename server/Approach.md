@@ -239,4 +239,4 @@ This approach prioritizes:
 3. **Scalability** through sampling and caching
 4. **Maintainability** through simple, testable patterns
 
-The system can handle datasets from 100 rows to 10M+ rows while maintaining sub-second response times for most queries through strategic use of sampling, caching, and pre-aggregation.
+The system should handle datasets from 100 rows to 10M+ rows while maintaining sub-second response times for most queries through strategic use of sampling, caching, and pre-aggregation.

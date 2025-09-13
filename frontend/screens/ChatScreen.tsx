@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
-import { TextInput, Button, Text, Chip, ActivityIndicator, Switch, Card, IconButton } from 'react-native-paper';
+import { ScrollView, View, KeyboardAvoidingView, Platform } from 'react-native';
+import { TextInput, Button, Text, Chip, ActivityIndicator, Card, IconButton, HelperText } from 'react-native-paper';
 import AnswerCard from '../components/AnswerCard';
-import { callChat, type ChatResponse } from '../lib/api';
+import { callChat, type ChatResponse, getDataStatus } from '../lib/api';
+
+type MessageItem = { role: 'user' | 'assistant'; text?: string; data?: ChatResponse; request?: string };
 
 const SUGGESTIONS = [
   'Revenue last 30 days',
@@ -12,103 +14,155 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatScreen() {
-  const [message, setMessage] = React.useState('Revenue last 30 days');
+  const [message, setMessage] = React.useState('');
   const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<ChatResponse | null>(null);
-  const [sqlMode, setSqlMode] = React.useState(false);
-  const [sqlQuery, setSqlQuery] = React.useState('');
-  const [showSqlEditor, setShowSqlEditor] = React.useState(false);
+  const [history, setHistory] = React.useState<MessageItem[]>([]);
+  const scrollRef = React.useRef<ScrollView>(null);
+  const [freshness, setFreshness] = React.useState<{ max?: string; orders?: number } | null>(null);
+
+  const scrollToEnd = React.useCallback(() => {
+    // Add longer delay for charts and complex content to render
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 300);
+  }, []);
+
+  // Only scroll on initial load, not on every history change
+  React.useEffect(() => {
+    scrollToEnd();
+    (async () => {
+      try {
+        const ds = await getDataStatus();
+        const max = ds?.date_analysis?.inventory?.max_date;
+        const orders = ds?.tables?.Inventory?.count;
+        setFreshness({ max, orders });
+      } catch {}
+    })();
+  }, []);
 
   const ask = async (prompt?: string) => {
-    const text = prompt || message;
-    if (!text.trim()) return;
+    const text = (prompt ?? message).trim();
+    if (!text) return;
     setLoading(true);
+    setHistory((h) => [...h, { role: 'user', text }]);
+    if (!prompt) setMessage('');
+    
+    // Scroll to bottom when sending new message
+    scrollToEnd();
+    
     try {
-      const res = await callChat(text.trim());
-      setResult(res);
-      if (res.sql) {
-        setSqlQuery(res.sql);
-      }
-      if (!prompt) setMessage('');
+      const res = await callChat(text);
+      setHistory((h) => [...h, { role: 'assistant', data: res, request: text }]);
+      // Scroll again after response
+      scrollToEnd();
     } catch (e) {
-      setResult({ error: String(e), suggestion: 'Check API URL in Settings' });
+      setHistory((h) => [...h, { role: 'assistant', data: { error: String(e), suggestion: 'Check API URL in Settings' }, request: text }]);
+      scrollToEnd();
     } finally {
       setLoading(false);
     }
   };
 
-  const executeSql = async () => {
-    if (!sqlQuery.trim()) return;
-    setLoading(true);
-    try {
-      // Send SQL directly to backend (you'd need to add this endpoint)
-      const res = await callChat(`SQL: ${sqlQuery}`);
-      setResult(res);
-    } catch (e) {
-      setResult({ error: String(e), suggestion: 'Invalid SQL or check API' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const clear = () => setHistory([]);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-      <Text variant="titleLarge" style={{ marginBottom: 8 }}>Ask about your data</Text>
-      
-      {/* Ask→SQL Toggle */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-        <Text style={{ flex: 1 }}>SQL Mode</Text>
-        <Switch value={sqlMode} onValueChange={setSqlMode} />
-      </View>
-
-      {!sqlMode ? (
-        <>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
-            {SUGGESTIONS.map((s) => (
-              <Chip key={s} style={{ marginRight: 6, marginBottom: 6 }} onPress={() => ask(s)}>
-                {s}
-              </Chip>
-            ))}
+    <KeyboardAvoidingView 
+      style={{ flex: 1 }} 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      keyboardVerticalOffset={Platform.select({ ios: 90, android: 100 })}
+    >
+      <View style={{ flex: 1 }}>
+        <ScrollView 
+          ref={scrollRef} 
+          contentContainerStyle={{ padding: 16, paddingBottom: 120 }} 
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={true}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Text variant="titleLarge" style={{ flex: 1 }}>Data Answers</Text>
+            {history.length > 0 && (
+              <IconButton icon="delete-outline" onPress={clear} accessibilityLabel="Clear" />
+            )}
           </View>
-          <TextInput
-            mode="outlined"
-            label="Your question"
-            value={message}
-            onChangeText={setMessage}
-            right={<TextInput.Icon icon="send" onPress={() => ask()} />}
-          />
-          <Button mode="contained" style={{ marginTop: 10 }} onPress={() => ask()} disabled={loading}>
-            Ask
-          </Button>
-        </>
-      ) : (
-        <>
-          <TextInput
-            mode="outlined"
-            label="SQL Query (SELECT only)"
-            value={sqlQuery}
-            onChangeText={setSqlQuery}
-            multiline
-            numberOfLines={4}
-            placeholder="SELECT SUM(order_total) FROM Inventory WHERE order_date > '2024-08-01'"
-          />
-          <Button mode="contained" style={{ marginTop: 10 }} onPress={executeSql} disabled={loading}>
-            Execute SQL
-          </Button>
-          {result?.sql && (
-            <Card style={{ marginTop: 8, padding: 8 }}>
-              <Text variant="labelSmall">Last Generated SQL:</Text>
-              <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{result.sql}</Text>
-            </Card>
+          {freshness && (
+            <Text style={{ marginBottom: 8, opacity: 0.7 }}>
+              Using data through {freshness.max || 'n/a'} {typeof freshness.orders === 'number' ? `(${freshness.orders} orders)` : ''}
+            </Text>
           )}
-        </>
-      )}
-      
-      {loading && <ActivityIndicator style={{ marginTop: 12 }} />}
-      {result && (
-        <AnswerCard data={result} onFollowUp={(p) => ask(p)} showSqlToggle={!sqlMode} />
-      )}
-    </ScrollView>
+
+          {/* Quick suggestions */}
+          {history.length === 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+              {SUGGESTIONS.map((s) => (
+                <Chip key={s} style={{ marginRight: 6, marginBottom: 6 }} onPress={() => ask(s)}>
+                  {s}
+                </Chip>
+              ))}
+            </View>
+          )}
+
+          {/* Transcript */}
+          {history.map((m, idx) => (
+            m.role === 'user' ? (
+              <Card key={idx} style={{ 
+                alignSelf: 'flex-end', 
+                backgroundColor: '#e8f0fe', 
+                marginVertical: 4, 
+                maxWidth: '80%' 
+              }}>
+                <Card.Content>
+                  <Text>{m.text}</Text>
+                </Card.Content>
+              </Card>
+            ) : (
+              <View key={idx} style={{ 
+                alignSelf: 'flex-start', 
+                marginVertical: 4, 
+                width: '100%'
+              }}>
+                {m.data && (
+                  <AnswerCard data={m.data} onFollowUp={(p) => ask(p)} requestMessage={m.request} />
+                )}
+              </View>
+            )
+          ))}
+
+          {loading && <ActivityIndicator style={{ marginTop: 12 }} />}
+        </ScrollView>
+
+        {/* Sticky input bar */}
+        <View style={{ 
+          padding: 12, 
+          borderTopWidth: 1, 
+          borderTopColor: '#eee',
+          backgroundColor: '#fff',
+          paddingBottom: Platform.OS === 'ios' ? 20 : 12
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput
+              mode="outlined"
+              placeholder="Ask about your data"
+              value={message}
+              onChangeText={setMessage}
+              onSubmitEditing={() => ask()}
+              style={{ flex: 1 }}
+              dense
+              autoCorrect={false}
+            />
+            <IconButton 
+              icon="send" 
+              mode="contained"
+              onPress={() => ask()} 
+              disabled={loading || !message.trim()}
+              style={{ margin: 0 }}
+            />
+          </View>
+          <HelperText type="info">
+            Try: "Revenue last 30 days", "Top 5 products", "orders 1001", "August 2024 revenue"
+          </HelperText>
+        </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
-

@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from time import perf_counter
 
 from ..engine import duck
 from ..validators import guards
@@ -40,12 +41,29 @@ class ChatResponse(BaseModel):
     tables_used: List[str]
     sql: str
     rows_scanned: int
+    exec_ms: float
     data_snippets: List[EvidenceSnippet]
     validations: List[Dict[str, Any]]
     confidence: float
     follow_ups: List[str]
     chart_suggestion: Dict[str, Any]
     quality_badges: Optional[List[Dict[str, str]]] = []
+    chart: Optional[Dict[str, Any]] = None
+
+
+def _get_inventory_max_date() -> Optional[date]:
+    try:
+        rows = duck.query_with_timeout(
+            "SELECT MAX(CAST(order_date AS DATE)) FROM Inventory",
+            (),
+            timeout_s=1.0,
+        )
+        if rows and rows[0][0] is not None:
+            # rows[0][0] is already a date object in DuckDB Python API
+            return rows[0][0]
+    except Exception:
+        pass
+    return None
 
 
 def _parse_date_range(msg: str, filt: Optional[Dict[str, Any]]) -> DateRange:
@@ -56,38 +74,112 @@ def _parse_date_range(msg: str, filt: Optional[Dict[str, Any]]) -> DateRange:
         t = dr.get("to")
         return DateRange(from_=date.fromisoformat(f) if f else None, to=date.fromisoformat(t) if t else None)
 
+    import re
     text = msg.lower()
     today = date.today()
-    start: Optional[date] = None
-    end: Optional[date] = None
-    
-    # For our test data which is from 2024, use wider ranges
-    logger.info(f"Parsing date from message: '{text}'")
-    
-    # Try to extract number of days
-    import re
-    days_match = re.search(r"last\s+(\d+)\s+days?", text)
-    
-    if days_match:
-        days = int(days_match.group(1))
-        # Use 2024 dates for testing with sample data
-        end = date(2024, 9, 30)
-        start = end - timedelta(days=days)
-    elif "last 30 days" in text or "30 days" in text:
-        # Use 2024 dates for testing with sample data
-        end = date(2024, 9, 30)
-        start = date(2024, 7, 1)
-    elif "this month" in text:
-        end = today
-        start = today.replace(day=1)
-    elif "last month" in text:
-        first_this = today.replace(day=1)
-        end = first_this - timedelta(days=1)
-        start = end.replace(day=1)
-    else:
-        # No time period found - return None (no default)
-        return DateRange(from_=None, to=None)
-    return DateRange(from_=start, to=end)
+    data_max = _get_inventory_max_date() or today
+
+    def start_of_month(d: date) -> date:
+        return d.replace(day=1)
+
+    def end_of_month(d: date) -> date:
+        # move to next month start then minus one day
+        if d.month == 12:
+            next_start = date(d.year + 1, 1, 1)
+        else:
+            next_start = date(d.year, d.month + 1, 1)
+        return next_start - timedelta(days=1)
+
+    def month_from_name(name: str) -> int:
+        months = {
+            'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+            'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
+        }
+        return months.get(name, 0)
+
+    def quarter_bounds(y: int, q: int) -> Tuple[date, date]:
+        m_start = (q - 1) * 3 + 1
+        start = date(y, m_start, 1)
+        end = end_of_month(date(y, m_start + 2, 1))
+        return start, end
+
+    # last N days/weeks/months
+    m = re.search(r"last\s+(\d+)\s+days?", text)
+    if m:
+        n = int(m.group(1))
+        return DateRange(from_=data_max - timedelta(days=n), to=data_max)
+    m = re.search(r"last\s+(\d+)\s+weeks?", text)
+    if m:
+        n = int(m.group(1))
+        return DateRange(from_=data_max - timedelta(days=7*n), to=data_max)
+    m = re.search(r"last\s+(\d+)\s+months?", text)
+    if m:
+        # approximate months as 30 days windows
+        n = int(m.group(1))
+        return DateRange(from_=data_max - timedelta(days=30*n), to=data_max)
+
+    # simple phrases
+    if "last 30 days" in text:
+        return DateRange(from_=data_max - timedelta(days=30), to=data_max)
+    if "this month" in text:
+        return DateRange(from_=start_of_month(data_max), to=data_max)
+    if "last month" in text:
+        first_this = start_of_month(data_max)
+        last_month_end = first_this - timedelta(days=1)
+        return DateRange(from_=start_of_month(last_month_end), to=last_month_end)
+    if "this year" in text:
+        return DateRange(from_=date(data_max.year, 1, 1), to=data_max)
+    if "last year" in text:
+        return DateRange(from_=date(data_max.year - 1, 1, 1), to=date(data_max.year - 1, 12, 31))
+    if "this week" in text:
+        # ISO week: Monday=0
+        start = data_max - timedelta(days=data_max.weekday())
+        return DateRange(from_=start, to=data_max)
+    if "last week" in text:
+        # previous week Monday..Sunday
+        start = data_max - timedelta(days=data_max.weekday() + 7)
+        end = start + timedelta(days=6)
+        return DateRange(from_=start, to=end)
+    if "this quarter" in text:
+        q = (data_max.month - 1) // 3 + 1
+        start, _ = quarter_bounds(data_max.year, q)
+        return DateRange(from_=start, to=data_max)
+    if "last quarter" in text:
+        q = (data_max.month - 1) // 3 + 1
+        if q == 1:
+            y = data_max.year - 1
+            q = 4
+        else:
+            y = data_max.year
+            q -= 1
+        start, end = quarter_bounds(y, q)
+        return DateRange(from_=start, to=end)
+
+    # Qn YYYY
+    m = re.search(r"\bq([1-4])\s*(\d{4})\b", text)
+    if m:
+        q = int(m.group(1))
+        y = int(m.group(2))
+        start, end = quarter_bounds(y, q)
+        return DateRange(from_=start, to=end)
+
+    # Named month (Month YYYY)
+    m = re.search(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})\b", text)
+    if m:
+        mon = month_from_name(m.group(1))
+        y = int(m.group(2))
+        start = date(y, mon, 1)
+        return DateRange(from_=start, to=end_of_month(start))
+
+    # Named month without year: assume data_max year
+    m = re.search(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b", text)
+    if m:
+        mon = month_from_name(m.group(1))
+        start = date(data_max.year, mon, 1)
+        return DateRange(from_=start, to=end_of_month(start))
+
+    # last N days default handled above; if nothing recognized, return empty range
+    return DateRange(from_=None, to=None)
 
 
 def _format_currency(v: Optional[float]) -> str:
@@ -122,8 +214,29 @@ def _intent_orders_by_customer(message: str) -> Optional[Tuple[str, Tuple[Any, .
     m = re.search(r"orders?\s*(?:for\s*)?(?:customer|cid)?\s*([0-9]+)", message, re.IGNORECASE)
     logger.info(f"Orders pattern match for '{message}': {m is not None}")
     if not m:
-        return None
-    cid = m.group(1)
+        # Try reversed form: "customer 1001 orders"
+        m2 = re.search(r"(?:customer|cid)?\s*([0-9]+)\s+orders?", message, re.IGNORECASE)
+        if m2:
+            cid = m2.group(1)
+        else:
+            # Try name-based: "orders for John Smith" or "orders John Smith"
+            m3 = re.search(r"orders?\s*(?:for\s*)?(?:customer\s*)?([A-Za-z][A-Za-z\s\.'-]{1,60})$", message, re.IGNORECASE)
+            if not m3:
+                return None
+            name = m3.group(1).strip()
+            try:
+                rows = duck.query_with_timeout(
+                    "SELECT CID, name FROM Customer WHERE LOWER(name) LIKE ? OR LOWER(email) LIKE ? ORDER BY CID LIMIT 3",
+                    (f"%{name.lower()}%", f"%{name.lower()}%"),
+                    timeout_s=1.0,
+                )
+                if not rows:
+                    return None
+                cid = str(rows[0][0])
+            except Exception:
+                return None
+    else:
+        cid = m.group(1)
     sql = (
         "SELECT Inventory.IID, CAST(Inventory.order_date AS DATE) AS order_date, Inventory.order_total "
         "FROM Inventory WHERE Inventory.CID = ? ORDER BY Inventory.order_date DESC"
@@ -136,7 +249,7 @@ def _intent_top_products(message: str) -> Optional[Tuple[str, Tuple[Any, ...], L
     import re
     
     # More flexible pattern - matches "top products", "best selling", etc.
-    m = re.search(r"(top|best)\s*(\d+)?\s*(selling|product|item)", message, re.IGNORECASE)
+    m = re.search(r"(top|best|popular)\s*(\d+)?\s*(?:best[-\s]*)?(selling|sellers|products?|items?)", message, re.IGNORECASE)
     logger.info(f"Top products pattern match for '{message}': {m is not None}")
     if not m:
         return None
@@ -148,8 +261,25 @@ def _intent_top_products(message: str) -> Optional[Tuple[str, Tuple[Any, ...], L
         "SELECT Detail.product_id, SUM(Detail.qty) AS total_qty, SUM(Detail.qty * Detail.unit_price) AS total_revenue "
         "FROM Detail GROUP BY Detail.product_id ORDER BY " + order_expr + f" DESC LIMIT {k}"
     )
-    followups = ["Orders for CID …", "Compare vs prior 30 days"]
+    followups = ["Top customers", "Revenue last 30 days"]
     return sql, tuple(), ["Detail"], "top_products", [], followups
+
+
+def _intent_top_customers(message: str) -> Optional[Tuple[str, Tuple[Any, ...], List[str], str, List[EvidenceSnippet], List[str]]]:
+    import re
+    m = re.search(r"(top|best|largest)\s*(\d+)?\s*(customers?)", message, re.IGNORECASE)
+    if not m:
+        return None
+    k = int(m.group(2)) if m.group(2) else 5
+    k = max(1, min(k, 1000))
+    sql = (
+        "SELECT COALESCE(Customer.name, CAST(Inventory.CID AS VARCHAR)) AS customer, "
+        "SUM(Inventory.order_total) AS revenue "
+        "FROM Inventory LEFT JOIN Customer ON Customer.CID = Inventory.CID "
+        "GROUP BY COALESCE(Customer.name, CAST(Inventory.CID AS VARCHAR)) "
+        "ORDER BY revenue DESC LIMIT " + str(k)
+    )
+    return sql, tuple(), ["Inventory", "Customer"], "top_customers", [], ["Revenue last 30 days"]
 
 
 def _intent_order_details(message: str) -> Optional[Tuple[str, Tuple[Any, ...], List[str], str, List[EvidenceSnippet], List[str]]]:
@@ -177,6 +307,7 @@ def _detect_intent(message: str, filters: Optional[Dict[str, Any]]):
     planners = [
         ("order_details", lambda: _intent_order_details(message)),
         ("orders_by_customer", lambda: _intent_orders_by_customer(message)),
+        ("top_customers", lambda: _intent_top_customers(message)),
         ("top_products", lambda: _intent_top_products(message)),
         ("revenue_by_period", lambda: _intent_revenue_by_period(message, filters)),
     ]
@@ -191,7 +322,7 @@ def _detect_intent(message: str, filters: Optional[Dict[str, Any]]):
     return None
 
 
-def _run_with_guards(sql: str, params: Tuple[Any, ...], limit_default: int = 1000) -> Tuple[List[tuple], List[Dict[str, Any]], str]:
+def _run_with_guards(sql: str, params: Tuple[Any, ...], limit_default: int = 1000) -> Tuple[List[tuple], List[Dict[str, Any]], str, float]:
     # Enforce SELECT-only
     ok, reason = guards.assert_select_only(sql)
     if not ok:
@@ -204,18 +335,20 @@ def _run_with_guards(sql: str, params: Tuple[Any, ...], limit_default: int = 100
     safe_sql = guards.enforce_limit(sql, limit_default)
 
     # Execute with timeout and caching
+    start = perf_counter()
     try:
         rows = duck.cached_query(safe_sql, params)
     except Exception:
         # Fallback to direct with timeout if not in cache
         rows = duck.query_with_timeout(safe_sql, params, timeout_s=2.0)
+    exec_ms = (perf_counter() - start) * 1000.0
 
     validations: List[Dict[str, Any]] = []
     if len(rows) == 0:
         validations.append({"name": "non_empty_result", "status": "fail"})
     else:
         validations.append({"name": "non_empty_result", "status": "pass"})
-    return rows, validations, safe_sql
+    return rows, validations, safe_sql, exec_ms
 
 
 def _error(message: str, suggestion: str = "Try a supported question or adjust filters."):
@@ -230,14 +363,23 @@ def chat(req: ChatRequest):
         spec = _detect_intent(req.message, req.filters)
         if not spec:
             logger.warning(f"No intent matched for: {req.message}")
+            # Tailored suggestions based on partial signals
+            msg_l = req.message.lower()
+            suggestion = "Try: 'Revenue last 30 days', 'Top 5 products', 'Orders 12345', or 'Order details 2001'."
+            if any(k in msg_l for k in ["revenue", "sales"]):
+                suggestion = "Add a time period, e.g. 'Revenue last 30 days', 'Revenue August 2024', or 'Sales this quarter'."
+            elif "orders" in msg_l and not any(ch.isdigit() for ch in msg_l):
+                suggestion = "Include a customer ID, e.g. 'orders 1001' or 'orders for CID 1001'."
+            elif "detail" in msg_l or "line" in msg_l:
+                suggestion = "Include an order ID, e.g. 'order details 2001'."
             return _error(
                 "Cannot answer: unsupported question.",
-                "Try: 'Revenue last 30 days', 'Top 5 products', 'Orders for CID 12345', or 'Order details IID 2001'.",
+                suggestion,
             )
 
         sql, params, tables, intent_name, snippets_seed, followups = spec
         logger.info(f"Intent: {intent_name}, SQL: {sql}, Params: {params}")
-        rows, validations, safe_sql = _run_with_guards(sql, params)
+        rows, validations, safe_sql, exec_ms = _run_with_guards(sql, params)
         logger.info(f"Query result: {len(rows)} rows, validations: {validations}")
 
         if validations and validations[0].get("status") == "fail":
@@ -258,6 +400,7 @@ def chat(req: ChatRequest):
                     "Orders for CID 1001",
                 ],
                 chart_suggestion={"type": "line"},
+                exec_ms=exec_ms,
             )
 
         # Compute per-intent response
@@ -279,18 +422,39 @@ def chat(req: ChatRequest):
                 snippets.append(EvidenceSnippet(date=day_str, revenue=float(r[1]) if r[1] is not None else 0.0))
             answer = f"Revenue from {dr.from_.isoformat()} to {dr.to.isoformat()}: {_format_currency(total)}."
             confidence, badges = calculate_confidence(validations, len(rows), tables)
-            followups = get_follow_up_suggestions(intent_name, params)
+            # Minimal, supported follow-ups only
+            followups = [
+                "Top 5 products",
+                "Top customers",
+            ]
+            # Build chart payload
+            chart = {
+                "type": "line",
+                "series": [
+                    {
+                        "name": "Revenue",
+                        "data": [
+                            (
+                                (r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0])),
+                                float(r[1]) if r[1] is not None else 0.0,
+                            ) for r in rows
+                        ],
+                    }
+                ],
+            }
             return ChatResponse(
                 answer_text=answer,
                 tables_used=tables,
                 sql=safe_sql,
                 rows_scanned=scanned,
+                exec_ms=exec_ms,
                 data_snippets=snippets,
                 validations=validations,
                 confidence=confidence,
                 follow_ups=followups,
                 chart_suggestion={"type": "line", "x": "order_date", "y": "revenue"},
                 quality_badges=badges,
+                chart=chart,
             )
 
         if intent_name == "orders_by_customer":
@@ -298,18 +462,37 @@ def chat(req: ChatRequest):
             cid = params[0]
             scanned_sql = "SELECT COUNT(*) FROM Inventory I WHERE I.CID = ?"
             scanned = int(duck.query_with_timeout(scanned_sql, (cid,), timeout_s=2.0)[0][0])
+            # Fetch customer name if present
+            cust_name = None
+            try:
+                rname = duck.query_with_timeout("SELECT name FROM Customer WHERE CID = ?", (cid,), timeout_s=1.0)
+                if rname and rname[0][0]:
+                    cust_name = str(rname[0][0])
+            except Exception:
+                pass
             # Snippets: first 3 orders
             snippets: List[EvidenceSnippet] = []
             for r in rows[:3]:
                 snippets.append(EvidenceSnippet(date=str(r[1]), revenue=float(r[2]) if r[2] is not None else 0.0))
-            answer = f"Found {min(scanned, len(rows))} orders for CID {cid}."
+            if cust_name:
+                answer = f"Found {min(scanned, len(rows))} orders for {cust_name} (CID {cid})."
+            else:
+                answer = f"Found {min(scanned, len(rows))} orders for CID {cid}."
             confidence, badges = calculate_confidence(validations, len(rows), tables)
-            followups = get_follow_up_suggestions(intent_name, params)
+            # Dynamic follow-ups: suggest up to 3 order detail links
+            followups: List[str] = []
+            for r in rows[:3]:
+                try:
+                    followups.append(f"Order details {str(r[0])}")
+                except Exception:
+                    pass
+            # Do not append unsupported suggestions
             return ChatResponse(
                 answer_text=answer,
                 tables_used=tables,
                 sql=safe_sql,
                 rows_scanned=scanned,
+                exec_ms=exec_ms,
                 data_snippets=snippets,
                 validations=validations,
                 confidence=confidence,
@@ -327,18 +510,31 @@ def chat(req: ChatRequest):
                 snippets.append(EvidenceSnippet(date=str(r[0]), revenue=float(r[2]) if r[2] is not None else 0.0))
             answer = f"Top {len(rows)} products by performance returned."
             confidence, badges = calculate_confidence(validations, len(rows), tables)
-            followups = get_follow_up_suggestions(intent_name, params)
+            followups = ["Top customers", "Revenue last 30 days"]
+            chart = {
+                "type": "bar",
+                "series": [
+                    {
+                        "name": "Revenue",
+                        "data": [
+                            (str(r[0]), float(r[2]) if r[2] is not None else 0.0) for r in rows
+                        ],
+                    }
+                ],
+            }
             return ChatResponse(
                 answer_text=answer,
                 tables_used=tables,
                 sql=safe_sql,
                 rows_scanned=scanned,
+                exec_ms=exec_ms,
                 data_snippets=snippets,
                 validations=validations,
                 confidence=confidence,
                 follow_ups=followups,
                 chart_suggestion={"type": "bar", "x": "product_id", "y": "total_revenue"},
                 quality_badges=badges,
+                chart=chart,
             )
 
         if intent_name == "order_details":
@@ -349,18 +545,47 @@ def chat(req: ChatRequest):
                 snippets.append(EvidenceSnippet(date=str(r[1]), revenue=float(r[4]) if r[4] is not None else 0.0))
             answer = f"Order {iid} has {len(rows)} lines (limited)."
             confidence, badges = calculate_confidence(validations, len(rows), tables)
-            followups = get_follow_up_suggestions(intent_name, params)
+            followups = []
             return ChatResponse(
                 answer_text=answer,
                 tables_used=tables,
                 sql=safe_sql,
                 rows_scanned=scanned,
+                exec_ms=exec_ms,
                 data_snippets=snippets,
                 validations=validations,
                 confidence=confidence,
                 follow_ups=followups,
                 chart_suggestion={"type": "table"},
                 quality_badges=badges,
+            )
+
+        if intent_name == "top_customers":
+            scanned = int(duck.query_with_timeout("SELECT COUNT(*) FROM Inventory", (), timeout_s=2.0)[0][0])
+            snippets: List[EvidenceSnippet] = []
+            for r in rows[:3]:
+                snippets.append(EvidenceSnippet(date=str(r[0]), revenue=float(r[1]) if r[1] is not None else 0.0))
+            answer = f"Top {len(rows)} customers by revenue returned."
+            confidence, badges = calculate_confidence(validations, len(rows), tables)
+            chart = {
+                "type": "bar",
+                "series": [
+                    {"name": "Revenue", "data": [(str(r[0]), float(r[1]) if r[1] is not None else 0.0) for r in rows]},
+                ],
+            }
+            return ChatResponse(
+                answer_text=answer,
+                tables_used=tables,
+                sql=safe_sql,
+                rows_scanned=scanned,
+                exec_ms=exec_ms,
+                data_snippets=snippets,
+                validations=validations,
+                confidence=confidence,
+                follow_ups=["Revenue last 30 days"],
+                chart_suggestion={"type": "bar", "x": "customer", "y": "revenue"},
+                quality_badges=badges,
+                chart=chart,
             )
 
         return _error("Unhandled intent.")

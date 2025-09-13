@@ -52,3 +52,4 @@ server/test_api.py
 *.cache
 .pytest_cache/
 server/.cache/
+docs/context.md   

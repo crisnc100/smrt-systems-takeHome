@@ -20,7 +20,7 @@ app.add_middleware(
 
 
 # Routers
-from .routers import health, datasource, chat, report, debug, analytics  # noqa: E402
+from .routers import health, datasource, chat, report, debug, analytics, upload  # noqa: E402
 
 app.include_router(health.router)
 app.include_router(datasource.router)
@@ -28,6 +28,7 @@ app.include_router(chat.router)
 app.include_router(report.router)
 app.include_router(debug.router)
 app.include_router(analytics.router)
+app.include_router(upload.router)
 
 
 @app.on_event("startup")

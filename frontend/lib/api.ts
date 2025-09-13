@@ -54,3 +54,15 @@ export async function callReport(type: 'revenue_by_month' | 'top_customers', fil
   });
   return res.json();
 }
+
+export async function runSelfCheck(): Promise<any> {
+  const base = await getBaseUrl();
+  const res = await fetch(`${base}/debug/test-queries`);
+  return res.json();
+}
+
+export async function getDataStatus(): Promise<any> {
+  const base = await getBaseUrl();
+  const res = await fetch(`${base}/debug/data-status`);
+  return res.json();
+}

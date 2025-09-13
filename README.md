@@ -39,11 +39,16 @@ curl -X POST http://localhost:8000/datasource/refresh
 ```bash
 cd frontend
 npm install
-npx expo install expo@^53  # Match SDK version
-npm start
+npx expo install expo-clipboard  # for Copy SQL button
+npx expo start
+# or with a dev client build
+# npx expo start --dev-client
 ```
 
-Configure backend URL in app settings (e.g., `http://192.168.1.100:8000`)
+Configure backend URL in app settings. Tips:
+- iOS Simulator: `http://localhost:8000`
+- Android Emulator: `http://10.0.2.2:8000`
+- Physical device on same Wi‑Fi: `http://<your-computer-LAN-IP>:8000`
 
 ## Example Queries
 

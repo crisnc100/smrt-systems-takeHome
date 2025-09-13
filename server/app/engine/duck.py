@@ -1,9 +1,10 @@
 import os
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 import duckdb
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from functools import lru_cache
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,33 @@ def _parquet_path(name: str) -> str:
     return os.path.join(get_data_dir(), f"{name}.parquet")
 
 
+def _load_alias_map() -> Dict[str, Dict[str, List[str]]]:
+    """Load alias_map.json from the data directory if present.
+    Structure:
+    {
+      "customer": {"cid": ["customer_id", "CID"], "name": ["full_name", "name"], ...},
+      "inventory": {"order_date": ["date", "orderDate", "order_date"], ...},
+      ...
+    }
+    """
+    path = os.path.join(get_data_dir(), "alias_map.json")
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # normalize keys to lowercase
+                norm: Dict[str, Dict[str, List[str]]] = {}
+                for tbl, cols in (data or {}).items():
+                    tkey = str(tbl).lower()
+                    norm[tkey] = {}
+                    for canon, syns in (cols or {}).items():
+                        norm[tkey][str(canon).lower()] = [str(s).lower() for s in (syns or [])]
+                return norm
+    except Exception:
+        pass
+    return {}
+
+
 def ensure_views() -> Dict[str, bool]:
     """Create or replace views for core tables over CSV or Parquet if present."""
     con = get_conn()
@@ -45,35 +73,73 @@ def ensure_views() -> Dict[str, bool]:
         # SQL string literal escape for DuckDB
         return "'" + path.replace("'", "''") + "'"
 
+    alias_map = _load_alias_map()
+
     for t in tables:
         pq = _parquet_path(t)
         csv = _csv_path(t)
+        raw_view = f"_{t}_raw"
         if os.path.exists(pq):
             logger.info(f"Loading {t} from parquet: {pq}")
-            con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_parquet({_lit(pq)})")
-            # Log row count
-            count = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            logger.info(f"  {t}: {count} rows loaded from parquet")
+            con.execute(f"CREATE OR REPLACE VIEW {raw_view} AS SELECT * FROM read_parquet({_lit(pq)})")
             created[t] = True
         elif os.path.exists(csv):
             logger.info(f"Loading {t} from CSV: {csv}")
-            # Use read_csv_auto for flexible schema inference
             con.execute(
-                f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_csv_auto({_lit(csv)}, HEADER=TRUE)"
+                f"CREATE OR REPLACE VIEW {raw_view} AS SELECT * FROM read_csv_auto({_lit(csv)}, HEADER=TRUE)"
             )
-            # Log row count
-            count = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            logger.info(f"  {t}: {count} rows loaded from CSV")
             created[t] = True
         else:
             logger.warning(f"No data file found for {t}")
             created[t] = False
-    
-    # Log sample data to verify loading
-    if created.get("Inventory"):
-        sample = con.execute("SELECT * FROM Inventory LIMIT 3").fetchall()
-        logger.info(f"Sample Inventory data: {sample}")
-    
+
+        # If not created, skip aliasing
+        if not created.get(t):
+            continue
+
+        # Apply alias mapping if present
+        tbl_key = t.lower()
+        tbl_alias = alias_map.get(tbl_key, {})
+        if tbl_alias:
+            # get raw columns
+            try:
+                desc = con.execute(f"SELECT * FROM {raw_view} LIMIT 0").description
+                raw_cols = [c[0] for c in desc]
+                lower_map = {c.lower(): c for c in raw_cols}
+                select_list: List[str] = []
+                for canon, syns in tbl_alias.items():
+                    # include canon itself as a synonym fallback
+                    candidates = [canon] + syns
+                    found: Optional[str] = None
+                    for cand in candidates:
+                        if cand in lower_map:
+                            found = lower_map[cand]
+                            break
+                    if found:
+                        select_list.append(f'"{found}" AS {canon}')
+                    else:
+                        # keep column present as NULL if missing
+                        select_list.append(f'NULL AS {canon}')
+                # Always materialize to canonical view name
+                projection = ", ".join(select_list) if select_list else "*"
+                con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT {projection} FROM {raw_view}")
+            except Exception as e:
+                logger.warning(f"Alias mapping failed for {t}: {e}; falling back to raw view")
+                con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM {raw_view}")
+        else:
+            # No alias mapping -> direct pass-through
+            con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM {raw_view}")
+
+        # Log row count and sample
+        try:
+            count = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            logger.info(f"  {t}: {count} rows loaded")
+            if t == "Inventory":
+                sample = con.execute("SELECT * FROM Inventory LIMIT 3").fetchall()
+                logger.info(f"Sample Inventory data: {sample}")
+        except Exception:
+            pass
+
     return created
 
 
