@@ -69,9 +69,7 @@ export default function ReportsScreen() {
           )}
         </View>
       )}
-      <Button mode="outlined" style={{ marginTop: 12 }} disabled>
-        Export CSV (coming soon)
-      </Button>
+      
     </ScrollView>
   );
 }

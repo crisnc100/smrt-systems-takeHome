@@ -100,9 +100,9 @@ def report(req: ReportRequest):
                 "SUM(Inventory.order_total) AS revenue "
                 "FROM Inventory LEFT JOIN Customer ON Customer.CID = Inventory.CID "
                 "GROUP BY COALESCE(Customer.name, CAST(Inventory.CID AS VARCHAR)) "
-                "ORDER BY revenue DESC LIMIT " + str(k)
+                "ORDER BY revenue DESC LIMIT ?"
             )
-            rows = _run_guarded(sql)
+            rows = _run_guarded(sql, (k,))
             series = [(str(r[0]), float(r[1]) if r[1] is not None else 0.0) for r in rows]
             summary = f"Top {len(series)} customers by revenue."
             return ReportResponse(
@@ -128,9 +128,9 @@ def report(req: ReportRequest):
                 "WHERE CAST(Inventory.order_date AS DATE) BETWEEN ? AND ? "
                 "GROUP BY Detail.product_id "
                 "ORDER BY total_revenue DESC "
-                "LIMIT " + str(k)
+                "LIMIT ?"
             )
-            rows = _run_guarded(sql, (dr.from_, dr.to))
+            rows = _run_guarded(sql, (dr.from_, dr.to, k))
             
             # Create two series - quantity and revenue
             qty_series = [(str(r[0]), float(r[1]) if r[1] is not None else 0.0) for r in rows]

@@ -5,18 +5,38 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from functools import lru_cache
 import logging
 import json
+import threading
 
 logger = logging.getLogger(__name__)
 
 
-_CONN = None
+# Thread-local storage for connections
+_thread_local = threading.local()
+# Global data version to track when data changes
+_data_version = 0
+_version_lock = threading.Lock()
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
-    global _CONN
-    if _CONN is None:
-        _CONN = duckdb.connect(database=':memory:')
-    return _CONN
+    global _data_version
+    if not hasattr(_thread_local, 'conn'):
+        _thread_local.conn = duckdb.connect(database=':memory:', read_only=False)
+        _thread_local.views_created = False
+        _thread_local.data_version = -1
+    # Check if data has been updated
+    if _thread_local.data_version != _data_version:
+        # Create/recreate views for this connection
+        _ensure_views_for_connection(_thread_local.conn)
+        _thread_local.data_version = _data_version
+        _thread_local.views_created = True
+    return _thread_local.conn
+
+
+def invalidate_all_connections():
+    """Call this after uploading new data to force all threads to reload."""
+    global _data_version
+    with _version_lock:
+        _data_version += 1
 
 
 def get_data_dir() -> str:
@@ -63,9 +83,9 @@ def _load_alias_map() -> Dict[str, Dict[str, List[str]]]:
     return {}
 
 
-def ensure_views() -> Dict[str, bool]:
+def _ensure_views_for_connection(con: duckdb.DuckDBPyConnection) -> Dict[str, bool]:
     """Create or replace views for core tables over CSV or Parquet if present."""
-    con = get_conn()
+    # Use the passed connection directly
     tables = ["Customer", "Inventory", "Detail", "Pricelist"]
     created: Dict[str, bool] = {}
 
@@ -141,6 +161,12 @@ def ensure_views() -> Dict[str, bool]:
             pass
 
     return created
+
+
+def ensure_views() -> Dict[str, bool]:
+    """Public function to ensure views are created for the current thread's connection."""
+    con = get_conn()
+    return {}
 
 
 def build_parquet_cache() -> Dict[str, bool]:

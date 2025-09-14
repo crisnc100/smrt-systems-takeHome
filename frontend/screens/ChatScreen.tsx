@@ -6,11 +6,12 @@ import { callChat, type ChatResponse, getDataStatus } from '../lib/api';
 
 type MessageItem = { role: 'user' | 'assistant'; text?: string; data?: ChatResponse; request?: string };
 
-const SUGGESTIONS = [
+// Default suggestions - will be updated with actual IDs from data
+const DEFAULT_SUGGESTIONS = [
   'Revenue last 30 days',
   'Top 5 products',
-  'Orders for CID 1001',
-  'Order details IID 2001',
+  'Top customers',
+  'Revenue this month',
 ];
 
 export default function ChatScreen() {
@@ -19,6 +20,7 @@ export default function ChatScreen() {
   const [history, setHistory] = React.useState<MessageItem[]>([]);
   const scrollRef = React.useRef<ScrollView>(null);
   const [freshness, setFreshness] = React.useState<{ max?: string; orders?: number } | null>(null);
+  const [suggestions, setSuggestions] = React.useState(DEFAULT_SUGGESTIONS);
 
   const scrollToEnd = React.useCallback(() => {
     // Add longer delay for charts and complex content to render
@@ -36,6 +38,18 @@ export default function ChatScreen() {
         const max = ds?.date_analysis?.inventory?.max_date;
         const orders = ds?.tables?.Inventory?.count;
         setFreshness({ max, orders });
+        
+        // Update suggestions with actual IDs from data
+        if (ds?.sample_ids) {
+          const { first_iid, first_cid } = ds.sample_ids;
+          const dynamicSuggestions = [
+            'Revenue last 30 days',
+            'Top 5 products',
+            first_cid ? `Orders for CID ${first_cid}` : 'Top customers',
+            first_iid ? `Order details ${first_iid}` : 'Revenue this month',
+          ];
+          setSuggestions(dynamicSuggestions);
+        }
       } catch {}
     })();
   }, []);
@@ -94,7 +108,7 @@ export default function ChatScreen() {
           {/* Quick suggestions */}
           {history.length === 0 && (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
-              {SUGGESTIONS.map((s) => (
+              {suggestions.map((s) => (
                 <Chip key={s} style={{ marginRight: 6, marginBottom: 6 }} onPress={() => ask(s)}>
                   {s}
                 </Chip>

@@ -75,6 +75,7 @@ def assert_select_only(sql: str) -> Tuple[bool, str]:
 
 def enforce_limit(sql: str, max_limit: int = 1000) -> str:
     # If LIMIT exists, ensure it's <= max_limit; otherwise append LIMIT
+    # Check for LIMIT with a number
     pattern = re.compile(r"\bLIMIT\s+(\d+)", re.IGNORECASE)
     m = pattern.search(sql)
     if m:
@@ -85,9 +86,15 @@ def enforce_limit(sql: str, max_limit: int = 1000) -> str:
             return sql
         except Exception:
             return sql
-    else:
-        # Append LIMIT at end
-        return sql.rstrip() + f" LIMIT {max_limit}"
+    
+    # Check for LIMIT with a parameter placeholder (?)
+    param_pattern = re.compile(r"\bLIMIT\s+\?", re.IGNORECASE)
+    if param_pattern.search(sql):
+        # LIMIT with parameter exists, don't add another one
+        return sql
+    
+    # No LIMIT found, append one
+    return sql.rstrip() + f" LIMIT {max_limit}"
 
 
 def validate_whitelist(sql: str) -> Tuple[bool, List[str]]:

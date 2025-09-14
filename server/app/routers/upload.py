@@ -121,6 +121,8 @@ async def upload_csv(
 
     # Rebuild Parquet cache and views
     built = duck.build_parquet_cache()
+    # Force all threads to reload views on next access
+    duck.invalidate_all_connections()
     views = duck.ensure_views()
     counts = duck.table_counts()
     duck.clear_cache()

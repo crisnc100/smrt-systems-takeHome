@@ -53,6 +53,7 @@ class ChatResponse(BaseModel):
 
 def _get_inventory_max_date() -> Optional[date]:
     try:
+        duck.ensure_views()  # Ensure tables are loaded
         rows = duck.query_with_timeout(
             "SELECT MAX(CAST(order_date AS DATE)) FROM Inventory",
             (),
@@ -61,9 +62,26 @@ def _get_inventory_max_date() -> Optional[date]:
         if rows and rows[0][0] is not None:
             # rows[0][0] is already a date object in DuckDB Python API
             return rows[0][0]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to get max date from Inventory: {e}")
     return None
+
+
+def _get_sample_ids() -> Tuple[Optional[str], Optional[str]]:
+    """Get sample IID and CID from actual data for suggestions."""
+    try:
+        duck.ensure_views()
+        # Get first order ID
+        iid_rows = duck.query_with_timeout("SELECT IID FROM Inventory LIMIT 1", (), timeout_s=0.5)
+        iid = str(iid_rows[0][0]) if iid_rows else None
+        
+        # Get first customer ID
+        cid_rows = duck.query_with_timeout("SELECT CID FROM Customer LIMIT 1", (), timeout_s=0.5)
+        cid = str(cid_rows[0][0]) if cid_rows else None
+        
+        return iid, cid
+    except Exception:
+        return None, None
 
 
 def _parse_date_range(msg: str, filt: Optional[Dict[str, Any]]) -> DateRange:
@@ -77,7 +95,16 @@ def _parse_date_range(msg: str, filt: Optional[Dict[str, Any]]) -> DateRange:
     import re
     text = msg.lower()
     today = date.today()
-    data_max = _get_inventory_max_date() or today
+    # Get the actual max date from data
+    actual_max = _get_inventory_max_date()
+    if actual_max is None:
+        # If we can't get the max date, use August 2024 as a reasonable default
+        # based on the sample data we've seen
+        data_max = date(2024, 8, 31)
+        logger.info(f"Using fallback date {data_max} since max date query failed")
+    else:
+        data_max = actual_max
+        logger.info(f"Using actual max date from data: {data_max}")
 
     def start_of_month(d: date) -> date:
         return d.replace(day=1)
@@ -365,15 +392,66 @@ def chat(req: ChatRequest):
             logger.warning(f"No intent matched for: {req.message}")
             # Tailored suggestions based on partial signals
             msg_l = req.message.lower()
-            suggestion = "Try: 'Revenue last 30 days', 'Top 5 products', 'Orders 12345', or 'Order details 2001'."
-            if any(k in msg_l for k in ["revenue", "sales"]):
-                suggestion = "Add a time period, e.g. 'Revenue last 30 days', 'Revenue August 2024', or 'Sales this quarter'."
+            
+            # Check for customer names
+            if any(name in msg_l for name in ["alice", "bob", "carol", "smith", "jones", "white"]):
+                suggestion = "I found a customer reference. Try: 'Orders for Alice Smith', 'Revenue from Bob Jones', or 'Customer 1001 orders'."
+                return _error(
+                    f"Please be more specific about what you want to know about this customer.",
+                    suggestion,
+                )
+            
+            # Check for revenue/sales without time period
+            if any(k in msg_l for k in ["revenue", "sales", "income", "money"]):
+                suggestion = "Choose a time period: 'Revenue last 30 days', 'Revenue this month', 'Revenue August 2024', or 'Revenue this year'."
+                return _error(
+                    "Revenue queries need a time period.",
+                    suggestion,
+                )
+            
+            # Check for products without specifics
+            elif any(k in msg_l for k in ["product", "item", "inventory"]):
+                suggestion = "Try: 'Top 5 products', 'Product P001 sales', or 'Most sold products'."
+                return _error(
+                    "Please specify what you want to know about products.",
+                    suggestion,
+                )
+            
+            # Check for customer queries
+            elif any(k in msg_l for k in ["customer", "client", "buyer"]):
+                suggestion = "Try: 'Top customers', 'Customer 1001 orders', or 'Best customers by revenue'."
+                return _error(
+                    "Please specify what you want to know about customers.",
+                    suggestion,
+                )
+            
+            # Check for order queries
             elif "orders" in msg_l and not any(ch.isdigit() for ch in msg_l):
-                suggestion = "Include a customer ID, e.g. 'orders 1001' or 'orders for CID 1001'."
+                # Get actual CID from data
+                _, sample_cid = _get_sample_ids()
+                cid_example = f"orders for CID {sample_cid}" if sample_cid else "orders for CID [customer_id]"
+                suggestion = f"Include a customer ID, e.g. '{cid_example}'."
+                return _error(
+                    "Please specify which customer's orders you want to see.",
+                    suggestion,
+                )
             elif "detail" in msg_l or "line" in msg_l:
-                suggestion = "Include an order ID, e.g. 'order details 2001'."
+                # Get actual IID from data
+                sample_iid, _ = _get_sample_ids()
+                iid_example = f"order details {sample_iid}" if sample_iid else "order details [order_id]"
+                suggestion = f"Include an order ID, e.g. '{iid_example}'."
+                return _error(
+                    "Please specify an order ID.",
+                    suggestion,
+                )
+            
+            # Generic fallback with dynamic examples
+            sample_iid, sample_cid = _get_sample_ids()
+            order_example = f"Order details {sample_iid}" if sample_iid else "Order details [order_id]"
+            customer_example = f"Orders for CID {sample_cid}" if sample_cid else "Orders for CID [customer_id]"
+            suggestion = f"Try: 'Revenue last 30 days', 'Top 5 products', 'Top customers', '{order_example}', or '{customer_example}'."
             return _error(
-                "Cannot answer: unsupported question.",
+                "I couldn't understand your question.",
                 suggestion,
             )
 

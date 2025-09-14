@@ -68,6 +68,21 @@ def data_status():
         except Exception as e:
             status["date_analysis"]["error"] = str(e)
         
+        # Get sample IDs for frontend suggestions
+        sample_ids = {}
+        try:
+            # Get first IID from Inventory
+            iid_result = conn.execute("SELECT IID FROM Inventory LIMIT 1").fetchone()
+            sample_ids["first_iid"] = str(iid_result[0]) if iid_result else None
+            
+            # Get first CID from Customer
+            cid_result = conn.execute("SELECT CID FROM Customer LIMIT 1").fetchone()
+            sample_ids["first_cid"] = str(cid_result[0]) if cid_result else None
+        except Exception:
+            pass
+        
+        status["sample_ids"] = sample_ids
+        
         return status
         
     except Exception as e:
