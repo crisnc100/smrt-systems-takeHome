@@ -172,10 +172,33 @@ export default function SettingsScreen() {
             const rows: { label: string; ok: boolean; detail?: string }[] = [];
             const r = checkResult || {};
             const isErr = (v: any) => typeof v === 'string' && v.startsWith('ERROR');
-            rows.push({ label: 'Revenue Q3 2024', ok: !isErr(r.revenue_q3_2024), detail: String(r.revenue_q3_2024) });
+            
+            // Total revenue (dynamic date range)
+            if (r.total_revenue) {
+              const revenue = r.total_revenue;
+              const label = revenue.date_range ? `Revenue ${revenue.date_range}` : 'Total Revenue';
+              const detail = revenue.amount ? `$${revenue.amount.toFixed(2)}` : String(revenue);
+              rows.push({ label, ok: !isErr(revenue), detail });
+            }
+            
+            // Top 5 Products
             rows.push({ label: 'Top 5 Products', ok: !isErr(r.top_5_products), detail: Array.isArray(r.top_5_products) ? `${r.top_5_products.length} items` : String(r.top_5_products) });
-            rows.push({ label: 'Orders CID 1001', ok: !isErr(r.orders_cid_1001), detail: Array.isArray(r.orders_cid_1001) ? `${r.orders_cid_1001.length} orders` : String(r.orders_cid_1001) });
-            rows.push({ label: 'Details IID 2001', ok: !isErr(r.details_iid_2001), detail: Array.isArray(r.details_iid_2001) ? `${r.details_iid_2001.length} lines` : String(r.details_iid_2001) });
+            
+            // Dynamic Orders (find key that starts with orders_cid_)
+            const ordersKey = Object.keys(r).find(k => k.startsWith('orders_cid_'));
+            if (ordersKey) {
+              const cid = ordersKey.replace('orders_cid_', '');
+              const orders = r[ordersKey];
+              rows.push({ label: `Orders CID ${cid}`, ok: !isErr(orders), detail: Array.isArray(orders) ? `${orders.length} orders` : String(orders) });
+            }
+            
+            // Dynamic Details (find key that starts with details_iid_)
+            const detailsKey = Object.keys(r).find(k => k.startsWith('details_iid_'));
+            if (detailsKey) {
+              const iid = detailsKey.replace('details_iid_', '');
+              const details = r[detailsKey];
+              rows.push({ label: `Details IID ${iid}`, ok: !isErr(details), detail: Array.isArray(details) ? `${details.length} lines` : String(details) });
+            }
             return rows.map((row, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                 <Text style={{ width: 160 }}>{row.label}</Text>

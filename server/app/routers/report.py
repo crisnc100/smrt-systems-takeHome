@@ -47,7 +47,20 @@ def _parse_date_range(filters: Optional[Dict[str, Any]]) -> DateRange:
         f = dr.get("from") or dr.get("from_")
         t = dr.get("to")
         return DateRange(from_=date.fromisoformat(f) if f else None, to=date.fromisoformat(t) if t else None)
-    # Default: last 12 months (approximate)
+    
+    # Get actual date range from data instead of using today
+    try:
+        duck.ensure_views()
+        rows = duck.query("SELECT MIN(CAST(order_date AS DATE)), MAX(CAST(order_date AS DATE)) FROM Inventory")
+        if rows and rows[0][0] and rows[0][1]:
+            min_date = rows[0][0]
+            max_date = rows[0][1]
+            # Default to showing all available data
+            return DateRange(from_=min_date, to=max_date)
+    except Exception:
+        pass
+    
+    # Fallback if no data: last 12 months from today
     to = date.today()
     frm = to.replace(day=1) - timedelta(days=365)
     return DateRange(from_=frm, to=to)

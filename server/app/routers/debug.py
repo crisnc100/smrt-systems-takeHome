@@ -97,16 +97,28 @@ def test_queries():
         
         results = {}
         
-        # Test revenue query
+        # Get actual date range from data
         try:
+            date_range = conn.execute("""
+                SELECT MIN(CAST(order_date AS DATE)) as min_date,
+                       MAX(CAST(order_date AS DATE)) as max_date
+                FROM Inventory
+            """).fetchone()
+            min_date = date_range[0] if date_range[0] else '2024-01-01'
+            max_date = date_range[1] if date_range[1] else '2024-12-31'
+            
+            # Test revenue query with actual date range
             revenue = conn.execute("""
                 SELECT SUM(order_total) as total
                 FROM Inventory
-                WHERE CAST(order_date AS DATE) BETWEEN '2024-07-01' AND '2024-09-30'
-            """).fetchone()
-            results["revenue_q3_2024"] = float(revenue[0]) if revenue[0] else 0
+                WHERE CAST(order_date AS DATE) BETWEEN ? AND ?
+            """, (min_date, max_date)).fetchone()
+            results["total_revenue"] = {
+                "amount": float(revenue[0]) if revenue[0] else 0,
+                "date_range": f"{min_date} to {max_date}"
+            }
         except Exception as e:
-            results["revenue_q3_2024"] = f"ERROR: {e}"
+            results["total_revenue"] = f"ERROR: {e}"
         
         # Test top products
         try:
@@ -125,34 +137,46 @@ def test_queries():
         except Exception as e:
             results["top_5_products"] = f"ERROR: {e}"
         
-        # Test customer orders
+        # Test customer orders with actual CID
         try:
-            orders = conn.execute("""
-                SELECT IID, order_date, order_total
-                FROM Inventory
-                WHERE CID = 1001
-                ORDER BY order_date DESC
-            """).fetchall()
-            results["orders_cid_1001"] = [
-                {"iid": row[0], "date": str(row[1]), "total": float(row[2]) if row[2] else 0}
-                for row in orders
-            ]
+            # Get first actual CID
+            first_cid = conn.execute("SELECT CID FROM Customer LIMIT 1").fetchone()
+            if first_cid:
+                cid = first_cid[0]
+                orders = conn.execute("""
+                    SELECT IID, order_date, order_total
+                    FROM Inventory
+                    WHERE CID = ?
+                    ORDER BY order_date DESC
+                """, (cid,)).fetchall()
+                results[f"orders_cid_{cid}"] = [
+                    {"iid": row[0], "date": str(row[1]), "total": float(row[2]) if row[2] else 0}
+                    for row in orders
+                ]
+            else:
+                results["orders"] = "No customers found"
         except Exception as e:
-            results["orders_cid_1001"] = f"ERROR: {e}"
+            results["orders"] = f"ERROR: {e}"
         
-        # Test order details
+        # Test order details with actual IID
         try:
-            details = conn.execute("""
-                SELECT DID, product_id, qty, unit_price
-                FROM Detail
-                WHERE IID = 2001
-            """).fetchall()
-            results["details_iid_2001"] = [
-                {"did": row[0], "product": row[1], "qty": row[2], "price": float(row[3]) if row[3] else 0}
-                for row in details
-            ]
+            # Get first actual IID
+            first_iid = conn.execute("SELECT IID FROM Inventory LIMIT 1").fetchone()
+            if first_iid:
+                iid = first_iid[0]
+                details = conn.execute("""
+                    SELECT DID, product_id, qty, unit_price
+                    FROM Detail
+                    WHERE IID = ?
+                """, (iid,)).fetchall()
+                results[f"details_iid_{iid}"] = [
+                    {"did": row[0], "product": row[1], "qty": row[2], "price": float(row[3]) if row[3] else 0}
+                    for row in details
+                ]
+            else:
+                results["details"] = "No orders found"
         except Exception as e:
-            results["details_iid_2001"] = f"ERROR: {e}"
+            results["details"] = f"ERROR: {e}"
         
         return results
         
