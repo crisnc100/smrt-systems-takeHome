@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { ScrollView, View, KeyboardAvoidingView, Platform } from 'react-native';
-import { TextInput, Button, Text, Chip, ActivityIndicator, Card, IconButton, HelperText } from 'react-native-paper';
+import { TextInput, Text, Chip, ActivityIndicator, Card, IconButton, HelperText } from 'react-native-paper';
 import AnswerCard from '../components/AnswerCard';
-import { callChat, type ChatResponse, getDataStatus } from '../lib/api';
+import { callChat, type ChatResponse, getDataStatus, getQueryMode, type QueryMode } from '../lib/api';
+import { useFocusEffect } from '@react-navigation/native';
 
-type MessageItem = { role: 'user' | 'assistant'; text?: string; data?: ChatResponse; request?: string };
+type MessageItem = { role: 'user' | 'assistant'; text?: string; data?: ChatResponse; request?: string; mode?: QueryMode };
 
 // Default suggestions - will be updated with actual IDs from data
 const DEFAULT_SUGGESTIONS = [
@@ -21,6 +22,7 @@ export default function ChatScreen() {
   const scrollRef = React.useRef<ScrollView>(null);
   const [freshness, setFreshness] = React.useState<{ max?: string; orders?: number } | null>(null);
   const [suggestions, setSuggestions] = React.useState(DEFAULT_SUGGESTIONS);
+  const [queryMode, setQueryMode] = React.useState<QueryMode>('classic');
 
   const scrollToEnd = React.useCallback(() => {
     // Add longer delay for charts and complex content to render
@@ -54,23 +56,40 @@ export default function ChatScreen() {
     })();
   }, []);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      (async () => {
+        try {
+          const mode = await getQueryMode();
+          if (active) {
+            setQueryMode(mode);
+          }
+        } catch {}
+      })();
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
+
   const ask = async (prompt?: string) => {
     const text = (prompt ?? message).trim();
     if (!text) return;
     setLoading(true);
-    setHistory((h) => [...h, { role: 'user', text }]);
+    setHistory((h) => [...h, { role: 'user', text, mode: queryMode }]);
     if (!prompt) setMessage('');
     
     // Scroll to bottom when sending new message
     scrollToEnd();
     
     try {
-      const res = await callChat(text);
-      setHistory((h) => [...h, { role: 'assistant', data: res, request: text }]);
+      const res = await callChat(text, {}, queryMode);
+      setHistory((h) => [...h, { role: 'assistant', data: res, request: text, mode: queryMode }]);
       // Scroll again after response
       scrollToEnd();
     } catch (e) {
-      setHistory((h) => [...h, { role: 'assistant', data: { error: String(e), suggestion: 'Check API URL in Settings' }, request: text }]);
+      setHistory((h) => [...h, { role: 'assistant', data: { error: String(e), suggestion: 'Check API URL in Settings' }, request: text, mode: queryMode }]);
       scrollToEnd();
     } finally {
       setLoading(false);
@@ -95,6 +114,9 @@ export default function ChatScreen() {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
             <Text variant="titleLarge" style={{ flex: 1 }}>Data Answers</Text>
+            <Chip compact mode="outlined" style={{ marginRight: history.length > 0 ? 4 : 0 }}>
+              {queryMode === 'ai' ? 'AI Smart Mode' : 'Classic Mode'}
+            </Chip>
             {history.length > 0 && (
               <IconButton icon="delete-outline" onPress={clear} accessibilityLabel="Clear" />
             )}
@@ -136,7 +158,7 @@ export default function ChatScreen() {
                 width: '100%'
               }}>
                 {m.data && (
-                  <AnswerCard data={m.data} onFollowUp={(p) => ask(p)} requestMessage={m.request} />
+                  <AnswerCard data={m.data} onFollowUp={(p) => ask(p)} requestMessage={m.request} mode={m.mode} />
                 )}
               </View>
             )

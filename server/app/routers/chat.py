@@ -1,12 +1,13 @@
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Literal
 import logging
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 from time import perf_counter
 
-from ..engine import duck
+from ..engine import duck, llm_query, sql_validator
+from ..engine.llm_query import LLMQueryError
 from ..validators import guards
 from ..validators.quality import calculate_confidence, get_follow_up_suggestions
 
@@ -29,6 +30,7 @@ class ChatRequest(BaseModel):
     message: str
     filters: Optional[Dict[str, Any]] = None
     ai_assist: bool = False
+    query_mode: Literal["classic", "ai"] = "classic"
 
 
 class EvidenceSnippet(BaseModel):
@@ -49,6 +51,7 @@ class ChatResponse(BaseModel):
     chart_suggestion: Dict[str, Any]
     quality_badges: Optional[List[Dict[str, str]]] = []
     chart: Optional[Dict[str, Any]] = None
+    query_mode: Literal["classic", "ai"] = "classic"
 
 
 def _get_inventory_max_date() -> Optional[date]:
@@ -378,15 +381,81 @@ def _run_with_guards(sql: str, params: Tuple[Any, ...], limit_default: int = 100
     return rows, validations, safe_sql, exec_ms
 
 
-def _error(message: str, suggestion: str = "Try a supported question or adjust filters."):
-    return {"error": message, "suggestion": suggestion}
+def _error(message: str, suggestion: str = "Try a supported question or adjust filters.", mode: Literal["classic", "ai"] = "classic"):
+    return {"error": message, "suggestion": suggestion, "query_mode": mode}
 
 
 @router.post("")
 def chat(req: ChatRequest):
     try:
-        logger.info(f"Chat request: message='{req.message}', filters={req.filters}")
+        mode: Literal["classic", "ai"] = "ai" if req.ai_assist else req.query_mode
+        logger.info(f"Chat request: mode={mode}, message='{req.message}', filters={req.filters}")
         duck.ensure_views()
+        if mode == "ai":
+            try:
+                generation = llm_query.run(req.message, req.filters or {})
+            except LLMQueryError as exc:
+                logger.warning(f"AI generation failed: {exc}")
+                return _error(str(exc), "Switch to Classic Mode or try again shortly.", mode)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception(f"Unexpected AI error: {exc}")
+                return _error("AI Smart Mode is temporarily unavailable.", "Switch to Classic Mode or try again shortly.", mode)
+
+            if not generation.sql:
+                summary = generation.summary or "AI Smart Mode could not generate a safe query."
+                suggestion = (generation.follow_ups or ["Try rephrasing your request", "Switch to Classic Mode"])[0]
+                return _error(summary, suggestion, mode)
+
+            try:
+                validated = sql_validator.validate(generation.sql)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning(f"AI SQL rejected: {exc}")
+                return _error(f"Generated SQL was rejected: {exc}", "Try rephrasing your request or switch to Classic Mode.", mode)
+
+            exec_start = perf_counter()
+            try:
+                rows = duck.query_with_timeout(validated.sql, (), timeout_s=3.0)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception(f"AI SQL execution failed: {exc}")
+                return _error("Generated SQL failed to run.", "Try rephrasing or adjust the request.", mode)
+            exec_ms = (perf_counter() - exec_start) * 1000.0
+
+            validations: List[Dict[str, Any]] = [
+                {"name": "sql_generated", "status": "pass"},
+                {
+                    "name": "non_empty_result",
+                    "status": "pass" if rows else "fail",
+                    "message": "" if rows else "AI Smart Mode did not find matching rows",
+                },
+            ]
+
+            confidence, badges = calculate_confidence(validations, len(rows), validated.tables)
+            followups = generation.follow_ups or get_follow_up_suggestions(validated.tables) or []
+            if not followups:
+                followups = ["Try a more specific question", "Switch back to Classic Mode"]
+            else:
+                followups = list(dict.fromkeys(followups))
+
+            if generation.summary:
+                answer = generation.summary.replace("{count}", str(len(rows)))
+            else:
+                answer = f"AI Smart Mode returned {len(rows)} rows." if rows else "AI Smart Mode could not find matching rows."
+
+            return ChatResponse(
+                answer_text=answer,
+                tables_used=validated.tables,
+                sql=validated.sql,
+                rows_scanned=len(rows),
+                exec_ms=exec_ms,
+                data_snippets=[],
+                validations=validations,
+                confidence=confidence,
+                follow_ups=followups[:4],
+                chart_suggestion={"type": "table"},
+                quality_badges=badges,
+                chart=None,
+                query_mode=mode,
+            )
         spec = _detect_intent(req.message, req.filters)
         if not spec:
             logger.warning(f"No intent matched for: {req.message}")
@@ -399,6 +468,7 @@ def chat(req: ChatRequest):
                 return _error(
                     f"Please be more specific about what you want to know about this customer.",
                     suggestion,
+                    mode,
                 )
             
             # Check for revenue/sales without time period
@@ -407,6 +477,7 @@ def chat(req: ChatRequest):
                 return _error(
                     "Revenue queries need a time period.",
                     suggestion,
+                    mode,
                 )
             
             # Check for products without specifics
@@ -415,6 +486,7 @@ def chat(req: ChatRequest):
                 return _error(
                     "Please specify what you want to know about products.",
                     suggestion,
+                    mode,
                 )
             
             # Check for customer queries
@@ -423,6 +495,7 @@ def chat(req: ChatRequest):
                 return _error(
                     "Please specify what you want to know about customers.",
                     suggestion,
+                    mode,
                 )
             
             # Check for order queries
@@ -434,6 +507,7 @@ def chat(req: ChatRequest):
                 return _error(
                     "Please specify which customer's orders you want to see.",
                     suggestion,
+                    mode,
                 )
             elif "detail" in msg_l or "line" in msg_l:
                 # Get actual IID from data
@@ -443,6 +517,7 @@ def chat(req: ChatRequest):
                 return _error(
                     "Please specify an order ID.",
                     suggestion,
+                    mode,
                 )
             
             # Generic fallback with dynamic examples
@@ -453,6 +528,7 @@ def chat(req: ChatRequest):
             return _error(
                 "I couldn't understand your question.",
                 suggestion,
+                mode,
             )
 
         sql, params, tables, intent_name, snippets_seed, followups = spec
@@ -479,6 +555,7 @@ def chat(req: ChatRequest):
                 ],
                 chart_suggestion={"type": "line"},
                 exec_ms=exec_ms,
+                query_mode=mode,
             )
 
         # Compute per-intent response
@@ -533,6 +610,7 @@ def chat(req: ChatRequest):
                 chart_suggestion={"type": "line", "x": "order_date", "y": "revenue"},
                 quality_badges=badges,
                 chart=chart,
+                query_mode=mode,
             )
 
         if intent_name == "orders_by_customer":
@@ -577,6 +655,7 @@ def chat(req: ChatRequest):
                 follow_ups=followups,
                 chart_suggestion={"type": "bar", "x": "order_date", "y": "order_total"},
                 quality_badges=badges,
+                query_mode=mode,
             )
 
         if intent_name == "top_products":
@@ -613,6 +692,7 @@ def chat(req: ChatRequest):
                 chart_suggestion={"type": "bar", "x": "product_id", "y": "total_revenue"},
                 quality_badges=badges,
                 chart=chart,
+                query_mode=mode,
             )
 
         if intent_name == "order_details":
@@ -636,6 +716,7 @@ def chat(req: ChatRequest):
                 follow_ups=followups,
                 chart_suggestion={"type": "table"},
                 quality_badges=badges,
+                query_mode=mode,
             )
 
         if intent_name == "top_customers":
@@ -664,10 +745,11 @@ def chat(req: ChatRequest):
                 chart_suggestion={"type": "bar", "x": "customer", "y": "revenue"},
                 quality_badges=badges,
                 chart=chart,
+                query_mode=mode,
             )
 
-        return _error("Unhandled intent.")
+        return _error("Unhandled intent.", mode=mode)
     except TimeoutError as te:
-        return _error(str(te), "Narrow the date range or reduce result size.")
+        return _error(str(te), "Narrow the date range or reduce result size.", mode)
     except Exception as e:
-        return _error(str(e), "Try a supported query or adjust parameters.")
+        return _error(str(e), "Try a supported query or adjust parameters.", mode)

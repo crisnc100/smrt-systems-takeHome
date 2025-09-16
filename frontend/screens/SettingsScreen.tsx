@@ -1,9 +1,8 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { Text, TextInput, Button, HelperText } from 'react-native-paper';
-import { getBaseUrl, setBaseUrl, refreshData, runSelfCheck } from '../lib/api';
+import { Text, TextInput, Button, HelperText, SegmentedButtons } from 'react-native-paper';
+import { getBaseUrl, setBaseUrl, refreshData, runSelfCheck, getQueryMode, setQueryMode as persistQueryMode, type QueryMode } from '../lib/api';
 import * as DocumentPicker from 'expo-document-picker';
-import { Platform } from 'react-native';
 
 export default function SettingsScreen() {
   const [url, setUrl] = React.useState('');
@@ -12,10 +11,30 @@ export default function SettingsScreen() {
   const [uploading, setUploading] = React.useState<boolean>(false);
   const [checking, setChecking] = React.useState<boolean>(false);
   const [checkResult, setCheckResult] = React.useState<any | null>(null);
+  const [queryMode, setQueryMode] = React.useState<QueryMode>('classic');
+  const [savingMode, setSavingMode] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     getBaseUrl().then(setUrl);
+    getQueryMode().then(setQueryMode);
   }, []);
+
+  const updateQueryMode = async (mode: QueryMode) => {
+    if (mode === queryMode) {
+      return;
+    }
+    setSavingMode(true);
+    setError(null);
+    try {
+      await persistQueryMode(mode);
+      setQueryMode(mode);
+      setStatus(mode === 'ai' ? 'AI Smart Mode enabled' : 'Classic mode enabled');
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingMode(false);
+    }
+  };
 
   const save = async () => {
     try {
@@ -147,6 +166,19 @@ export default function SettingsScreen() {
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }}>
       <Text variant="titleLarge" style={{ marginBottom: 12 }}>Settings</Text>
+      <Text variant="titleMedium" style={{ marginBottom: 8 }}>Query Mode</Text>
+      <SegmentedButtons
+        value={queryMode}
+        onValueChange={(value) => updateQueryMode(value as QueryMode)}
+        buttons={[
+          { value: 'classic', label: 'Classic', disabled: savingMode },
+          { value: 'ai', label: 'AI Smart', disabled: savingMode },
+        ]}
+        style={{ marginBottom: 4 }}
+      />
+      <HelperText type="info">
+        Classic uses pattern-matched queries; AI Smart lets an LLM generate SQL with guardrails.
+      </HelperText>
       <TextInput label="API Base URL" value={url} onChangeText={setUrl} mode="outlined" />
       <HelperText type="info">Default: http://localhost:8000</HelperText>
       <View style={{ flexDirection: 'row', marginTop: 8 }}>

@@ -2,6 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type EvidenceSnippet = { date?: string; revenue?: number };
 
+const QUERY_MODE_KEY = 'QUERY_MODE';
+
+export type QueryMode = 'classic' | 'ai';
+
 export type ChatResponse = {
   answer_text?: string; // may be absent when error is returned
   tables_used?: string[];
@@ -14,6 +18,7 @@ export type ChatResponse = {
   chart_suggestion?: { [k: string]: any };
   error?: string;
   suggestion?: string;
+  query_mode?: QueryMode;
 };
 
 export async function getBaseUrl(): Promise<string> {
@@ -29,14 +34,32 @@ export async function setBaseUrl(url: string): Promise<void> {
   await AsyncStorage.setItem('API_BASE_URL', url);
 }
 
-export async function callChat(message: string, filters: any = {}): Promise<ChatResponse> {
+export async function getQueryMode(): Promise<QueryMode> {
+  try {
+    const stored = await AsyncStorage.getItem(QUERY_MODE_KEY);
+    return stored === 'ai' ? 'ai' : 'classic';
+  } catch {
+    return 'classic';
+  }
+}
+
+export async function setQueryMode(mode: QueryMode): Promise<void> {
+  await AsyncStorage.setItem(QUERY_MODE_KEY, mode);
+}
+
+export async function callChat(message: string, filters: any = {}, mode?: QueryMode): Promise<ChatResponse> {
   const base = await getBaseUrl();
+  const queryMode = mode ?? await getQueryMode();
   const res = await fetch(`${base}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, filters, ai_assist: false })
+    body: JSON.stringify({ message, filters, query_mode: queryMode })
   });
-  return res.json();
+  const data = await res.json();
+  if (typeof data === 'object' && data !== null) {
+    (data as any).query_mode = queryMode;
+  }
+  return data;
 }
 
 export async function refreshData(): Promise<any> {

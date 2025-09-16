@@ -40,12 +40,27 @@ def invalidate_all_connections():
 
 
 def get_data_dir() -> str:
-    # Default to server/data when running from repo root
+    # Check for environment variable first (for custom data)
     env_dir = os.environ.get("DATA_DIR")
     if env_dir:
         return env_dir
-    here = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    return os.path.join(here, "data")
+
+    # Get the project root directory (parent of server)
+    server_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    project_root = os.path.dirname(server_dir)
+
+    # Check if user has uploaded data in server/data
+    user_data = os.path.join(server_dir, "data")
+    if os.path.exists(user_data) and os.listdir(user_data):
+        return user_data
+
+    # Default to test_data at project root for evaluation/demo
+    test_data = os.path.join(project_root, "test_data")
+    if os.path.exists(test_data):
+        return test_data
+
+    # Fallback to server/data if nothing else exists
+    return user_data
 
 
 def _csv_path(name: str) -> str:
@@ -89,6 +104,10 @@ def _ensure_views_for_connection(con: duckdb.DuckDBPyConnection) -> Dict[str, bo
     tables = ["Customer", "Inventory", "Detail", "Pricelist"]
     created: Dict[str, bool] = {}
 
+    # Check if we're using the interview task dataset
+    data_dir = get_data_dir()
+    is_interview_data = "test_data" in data_dir
+
     def _lit(path: str) -> str:
         # SQL string literal escape for DuckDB
         return "'" + path.replace("'", "''") + "'"
@@ -115,6 +134,66 @@ def _ensure_views_for_connection(con: duckdb.DuckDBPyConnection) -> Dict[str, bo
 
         # If not created, skip aliasing
         if not created.get(t):
+            continue
+
+        # Special handling for interview task dataset
+        if is_interview_data:
+            if t == "Customer":
+                # Map interview data columns to expected schema
+                con.execute(f"""
+                    CREATE OR REPLACE VIEW {t} AS
+                    SELECT
+                        CID,
+                        CONCAT(FNAME1, ' ', LNAME) as name,
+                        EMAIL as email,
+                        CONCAT(HAREA, HPHONE) as phone,
+                        ADDRESS as address,
+                        CITY as city,
+                        STATE as state,
+                        ZIP as zip
+                    FROM {raw_view}
+                """)
+            elif t == "Inventory":
+                # Map INDATE to order_date, SUBTOTAL to order_total
+                con.execute(f"""
+                    CREATE OR REPLACE VIEW {t} AS
+                    SELECT
+                        IID,
+                        CID,
+                        CAST(INDATE AS DATE) as order_date,
+                        SUBTOTAL as order_total,
+                        TICKETNO,
+                        CATEGORY,
+                        PIECES,
+                        READYDATE,
+                        OUTDATE,
+                        PIF,
+                        payment_type
+                    FROM {raw_view}
+                """)
+            elif t == "Detail":
+                # Map interview data Detail columns
+                con.execute(f"""
+                    CREATE OR REPLACE VIEW {t} AS
+                    SELECT
+                        Item_ID as detail_id,
+                        IID,
+                        price_table_item_id,
+                        item_count as quantity,
+                        item_baseprice as price,
+                        standardSubtotal as total
+                    FROM {raw_view}
+                """)
+            elif t == "Pricelist":
+                # Map interview data Pricelist columns
+                con.execute(f"""
+                    CREATE OR REPLACE VIEW {t} AS
+                    SELECT
+                        item_id as price_table_item_id,
+                        name as item_name,
+                        baseprice as price
+                    FROM {raw_view}
+                """)
             continue
 
         # Apply alias mapping if present

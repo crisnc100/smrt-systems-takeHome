@@ -2,16 +2,17 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Card, Text, Chip, Divider, Banner } from 'react-native-paper';
 import EvidenceSection from './EvidenceSection';
-import type { ChatResponse } from '../lib/api';
+import type { ChatResponse, QueryMode } from '../lib/api';
 import Chart from './Chart';
 
 type Props = {
   data: ChatResponse;
   onFollowUp: (prompt: string) => void;
   requestMessage?: string;
+  mode?: QueryMode;
 };
 
-export default function AnswerCard({ data, onFollowUp, requestMessage }: Props) {
+export default function AnswerCard({ data, onFollowUp, requestMessage, mode }: Props) {
   if (!data) return null;
   const { answer_text, follow_ups } = data;
   const validations = data.validations || [];
@@ -19,6 +20,11 @@ export default function AnswerCard({ data, onFollowUp, requestMessage }: Props) 
   return (
     <Card style={{ marginVertical: 8 }}>
       <Card.Content>
+        {mode && (
+          <Text variant="labelSmall" style={{ marginBottom: 6, opacity: 0.6 }}>
+            {mode === 'ai' ? 'AI Smart Mode' : 'Classic Mode'}
+          </Text>
+        )}
         {(data.error || hasNonEmptyFail) && (
           <Banner
             visible

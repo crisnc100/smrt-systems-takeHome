@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from app.engine import duck
+from app.engine import duck, sql_validator
 from app.routers.chat import _detect_intent, _run_with_guards
 from app.validators import guards
 
@@ -79,10 +79,22 @@ class TestQueryLogic(unittest.TestCase):
             ("SELECT * FROM Customer LIMIT 5000", "SELECT * FROM Customer LIMIT 1000"),
             ("SELECT * FROM Customer LIMIT 50", "SELECT * FROM Customer LIMIT 50"),
         ]
-        
+
         for original, expected in queries:
             result = guards.enforce_limit(original, 1000)
             self.assertEqual(result.strip(), expected.strip())
+
+    def test_llm_sql_validator(self):
+        """LLM generated SQL should be sanitized before execution"""
+        validated = sql_validator.validate("SELECT name FROM Customer c JOIN Inventory i ON c.CID = i.CID")
+        self.assertEqual(set(validated.tables), {"Customer", "Inventory"})
+        self.assertIn("LIMIT", validated.sql.upper())
+
+        with self.assertRaises(ValueError):
+            sql_validator.validate("SELECT * FROM Users")
+
+        with self.assertRaises(ValueError):
+            sql_validator.validate("DROP TABLE Customer")
     
     def test_data_relationships(self):
         """Test that foreign key relationships are valid"""

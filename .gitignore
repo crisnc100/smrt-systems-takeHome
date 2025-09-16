@@ -25,6 +25,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Environment variables
+.env
+server/.env
+
 # Logs
 *.log
 npm-debug.log*
