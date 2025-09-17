@@ -11,9 +11,14 @@ type MessageItem = { role: 'user' | 'assistant'; text?: string; data?: ChatRespo
 const DEFAULT_SUGGESTIONS = [
   'Revenue last 30 days',
   'Top 5 products',
-  'Top customers',
-  'Revenue this month',
+  'Orders for CID 1001',
+  'Order details 1001',
 ];
+
+const MODE_HINT: Record<QueryMode, string> = {
+  classic: 'Classic mode answers supported question patterns with zero risk of hallucination.',
+  ai: 'AI Smart mode lets you phrase questions freely; SQL is generated with guardrails before hitting your data. If you need a deterministic response, switch back to Classic mode in Settings.',
+};
 
 export default function ChatScreen() {
   const [message, setMessage] = React.useState('');
@@ -23,6 +28,7 @@ export default function ChatScreen() {
   const [freshness, setFreshness] = React.useState<{ max?: string; orders?: number } | null>(null);
   const [suggestions, setSuggestions] = React.useState(DEFAULT_SUGGESTIONS);
   const [queryMode, setQueryMode] = React.useState<QueryMode>('classic');
+  const modeHint = MODE_HINT[queryMode];
 
   const scrollToEnd = React.useCallback(() => {
     // Add longer delay for charts and complex content to render
@@ -121,6 +127,7 @@ export default function ChatScreen() {
               <IconButton icon="delete-outline" onPress={clear} accessibilityLabel="Clear" />
             )}
           </View>
+          <Text style={{ marginBottom: 8, opacity: 0.7 }}>{modeHint}</Text>
           {freshness && (
             <Text style={{ marginBottom: 8, opacity: 0.7 }}>
               Using data through {freshness.max || 'n/a'} {typeof freshness.orders === 'number' ? `(${freshness.orders} orders)` : ''}
@@ -129,12 +136,15 @@ export default function ChatScreen() {
 
           {/* Quick suggestions */}
           {history.length === 0 && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
-              {suggestions.map((s) => (
-                <Chip key={s} style={{ marginRight: 6, marginBottom: 6 }} onPress={() => ask(s)}>
-                  {s}
-                </Chip>
-              ))}
+            <View style={{ marginBottom: 8 }}>
+              <Text style={{ marginBottom: 4, fontWeight: '600' }}>Sample questions</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {suggestions.map((s) => (
+                  <Chip key={s} style={{ marginRight: 6, marginBottom: 6 }} onPress={() => ask(s)}>
+                    {s}
+                  </Chip>
+                ))}
+              </View>
             </View>
           )}
 
@@ -195,7 +205,7 @@ export default function ChatScreen() {
             />
           </View>
           <HelperText type="info">
-            Try: "Revenue last 30 days", "Top 5 products", "orders 1001", "August 2024 revenue"
+            Try: "Revenue last 30 days", "Top 5 products", "Orders for CID 1001", "Order details 1001". Need a deterministic answer? Toggle Classic mode in Settings.
           </HelperText>
         </View>
       </View>

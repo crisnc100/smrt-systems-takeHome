@@ -58,6 +58,7 @@
 **What’s Done:**
 - Chat header + answer cards display which mode handled each response so users always know Classic vs AI Smart
 - Follow-up suggestions are capped and deduplicated to prevent overload when the LLM returns lots of ideas
+- Added AI sample row previews so users can see concrete evidence from the generated SQL
 
 **TODO:**
 - Reword quick-suggestion chips so they read as examples instead of “only supported phrases”
@@ -103,16 +104,16 @@
    - Tune `confidence` heuristics once we observe real outputs
 
 2. **End-to-End Manual Run**
-   - Exercise the AI mode with a real OpenRouter key
-   - Capture latency + cost notes for the write-up/demo
+    - Exercise the AI mode with a real OpenRouter key ✅ (e.g., “Show revenue by month for this year” returns rows with sample evidence)
+    - Capture latency + cost notes for the write-up/demo
 
 3. **Prompt/Validator Tuning**
    - Expand column allowlists if new questions surface additional fields
    - Record any tricky prompts to document best practices
 
 4. **Frontend polish**
-   - Refresh suggestion chip copy + add a one-line “mode info” callout in chat/settings
-   - Decide whether to expose AI-mode snippets or leave Classic-only evidence for this iteration
+   - [x] Refresh suggestion chip copy + add a one-line “mode info” callout in chat/settings
+   - [x] Surface AI-mode evidence snippets; monitor layout with real data
 
 ### Priority 2: Final Deliverables (Wednesday)
 1. **Complete Testing**

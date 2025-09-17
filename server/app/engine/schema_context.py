@@ -79,6 +79,11 @@ TABLE_SCHEMAS: List[TableSchema] = [
 
 TABLE_NAMES = [schema.name for schema in TABLE_SCHEMAS]
 TABLE_NAME_MAP = {name.lower(): name for name in TABLE_NAMES}
+COLUMN_NAME_SET = {
+    col.lower()
+    for schema in TABLE_SCHEMAS
+    for col in schema.columns.keys()
+}
 
 
 RELATIONSHIP_NOTES = (
@@ -110,6 +115,8 @@ AI_USER_PROMPT_TEMPLATE = (
     "Available tables and columns:\n"
     f"{SCHEMA_SUMMARY}\n\n"
     "Active filters (JSON): {filters}\n"
+    "Helpful DuckDB snippets: date_trunc('month', order_date), date_trunc('month', current_date), strftime(order_date, '%Y-%m').\n"
+    "Avoid SQLite-style strftime('now', ...) chains.\n"
     "User question: {question}.\n"
     "Respond with JSON only, no prose."
 )

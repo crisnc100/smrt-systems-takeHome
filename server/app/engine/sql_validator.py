@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from typing import List
 
 from ..validators import guards
-from .schema_context import TABLE_NAME_MAP
+from .schema_context import TABLE_NAME_MAP, COLUMN_NAME_SET
+
+ALLOWED_SPECIAL_IDENTIFIERS = {
+    "current_date",
+    "current_timestamp",
+    "today",
+}
 
 FORBIDDEN_KEYWORDS = {
     "--",
@@ -74,6 +80,9 @@ def validate(sql: str, *, default_limit: int = 200) -> ValidatedSQL:
             continue
         key = identifier.lower()
         if key not in TABLE_NAME_MAP:
+            if key in COLUMN_NAME_SET or key in ALLOWED_SPECIAL_IDENTIFIERS:
+                # False positive from constructs like EXTRACT(... FROM column)
+                continue
             raise ValueError(f"Unsupported table referenced: {identifier}")
         discovered.append(TABLE_NAME_MAP[key])
 

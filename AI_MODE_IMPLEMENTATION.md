@@ -22,6 +22,7 @@ The SMRT Systems team appreciated our structured, deterministic approach but hig
 - **SQL generation** from conversational input
 - **Hallucination prevention** through strict validation
 - **Unified chat UI** - users type the same way regardless of mode; quick suggestions are examples, not requirements
+- **Result evidence** - top rows from each AI query are returned so users can see the underlying data
 
 ## Implementation Strategy
 

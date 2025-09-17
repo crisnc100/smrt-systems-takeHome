@@ -15,6 +15,7 @@ export default function EvidenceSection({ data, requestMessage }: { data: ChatRe
   const tables = data.tables_used || [];
   const validations = data.validations || [];
   const snippets = data.data_snippets || [];
+  const sampleRows = (data as any).sample_rows as Array<Record<string, any>> | undefined;
   const qualityBadges = (data as any).quality_badges || [];
 
   React.useEffect(() => {
@@ -86,7 +87,23 @@ export default function EvidenceSection({ data, requestMessage }: { data: ChatRe
           )}
           
           {/* Sample data if available */}
-          {snippets.length > 0 && (
+          {sampleRows && sampleRows.length > 0 && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ fontWeight: 'bold', color: '#374151', marginBottom: 4 }}>Sample Rows</Text>
+              <View style={{ backgroundColor: '#eef2ff', padding: 8, borderRadius: 6 }}>
+                {sampleRows.slice(0, 3).map((row, idx) => (
+                  <View key={idx} style={{ marginBottom: 4 }}>
+                    {Object.entries(row).map(([key, value]) => (
+                      <Text key={key} style={{ color: '#312e81', fontSize: 12 }}>
+                        {key}: {String(value)}
+                      </Text>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+          {!sampleRows && snippets.length > 0 && (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontWeight: 'bold', color: '#374151', marginBottom: 4 }}>Sample Results</Text>
               <View style={{ backgroundColor: '#fef3c7', padding: 8, borderRadius: 6 }}>

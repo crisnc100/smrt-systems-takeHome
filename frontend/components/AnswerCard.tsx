@@ -17,6 +17,11 @@ export default function AnswerCard({ data, onFollowUp, requestMessage, mode }: P
   const { answer_text, follow_ups } = data;
   const validations = data.validations || [];
   const hasNonEmptyFail = validations.some(v => v.name === 'non_empty_result' && v.status === 'fail');
+  const sampleRows = (data as any).sample_rows as Array<Record<string, any>> | undefined;
+  const firstSample = sampleRows && sampleRows.length > 0 ? sampleRows[0] : undefined;
+  const firstSamplePreview = firstSample
+    ? Object.entries(firstSample).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join('  |  ')
+    : null;
   return (
     <Card style={{ marginVertical: 8 }}>
       <Card.Content>
@@ -39,6 +44,11 @@ export default function AnswerCard({ data, onFollowUp, requestMessage, mode }: P
           <Text variant="titleMedium">{answer_text}</Text>
         ) : (
           <Text variant="titleMedium">{data.error || 'No answer'}</Text>
+        )}
+        {firstSamplePreview && (
+          <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: '#f3f4ff' }}>
+            <Text style={{ fontSize: 12, color: '#3730a3' }}>{firstSamplePreview}</Text>
+          </View>
         )}
         {(data as any).chart && (data as any).chart.series && (
           <>

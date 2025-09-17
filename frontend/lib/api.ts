@@ -19,6 +19,7 @@ export type ChatResponse = {
   error?: string;
   suggestion?: string;
   query_mode?: QueryMode;
+  sample_rows?: Array<{ [key: string]: any }>;
 };
 
 export async function getBaseUrl(): Promise<string> {

@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Literal
+import re
 import logging
 
 from fastapi import APIRouter
@@ -52,6 +53,7 @@ class ChatResponse(BaseModel):
     quality_badges: Optional[List[Dict[str, str]]] = []
     chart: Optional[Dict[str, Any]] = None
     query_mode: Literal["classic", "ai"] = "classic"
+    sample_rows: Optional[List[Dict[str, Any]]] = None
 
 
 def _get_inventory_max_date() -> Optional[date]:
@@ -385,6 +387,75 @@ def _error(message: str, suggestion: str = "Try a supported question or adjust f
     return {"error": message, "suggestion": suggestion, "query_mode": mode}
 
 
+def _sample_rows(sql: str, limit: int = 3) -> List[Dict[str, Any]]:
+    try:
+        con = duck.get_conn()
+        sample_sql = f"SELECT * FROM ({sql}) AS sub LIMIT {limit}"
+        cursor = con.execute(sample_sql)
+        cols = [desc[0] for desc in cursor.description] if cursor.description else []
+        rows = cursor.fetchall()
+        if not cols:
+            return []
+        return [dict(zip(cols, row)) for row in rows]
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.info(f"Could not build sample rows: {exc}")
+        return []
+
+
+def _prettify_value(key: str, value: Any) -> str:
+    try:
+        if isinstance(value, float):
+            if any(token in key.lower() for token in ("revenue", "total", "amount", "price")):
+                return f"${value:,.2f}"
+            return f"{value:,.2f}"
+        if isinstance(value, (int,)):
+            if "month" in key.lower() and 1 <= value <= 12:
+                import calendar
+
+                return calendar.month_abbr[value]
+            return str(value)
+        if isinstance(value, date):
+            return value.strftime("%Y-%m") if "month" in key.lower() else value.strftime("%Y-%m-%d")
+        text = str(value)
+        if re.match(r"\d{4}-\d{2}-\d{2}", text):
+            return text[:7] if "month" in key.lower() else text[:10]
+        if re.match(r"\d{4}-\d{2}", text):
+            return text[:7]
+        return text
+    except Exception:
+        return str(value)
+
+
+def _summarize_samples(sample_rows: List[Dict[str, Any]], total_rows: int) -> str:
+    if not sample_rows:
+        return ""
+    highlights: List[str] = []
+    for row in sample_rows[:3]:
+        parts = []
+        for key, value in list(row.items())[:3]:
+            parts.append(f"{key}: {_prettify_value(key, value)}")
+        if parts:
+            highlights.append("; ".join(parts))
+    if not highlights:
+        return ""
+    shown = min(len(sample_rows), 3, total_rows)
+    noun = "row" if total_rows == 1 else "rows"
+    return f"Showing {shown} of {total_rows} {noun}: " + " | ".join(highlights)
+
+
+def _soften_summary(summary: str) -> str:
+    if not summary:
+        return ""
+    text = summary.strip()
+    text = re.sub(r"^(This|The) query", "It", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bSQL\b", "analysis", text)
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    if text.lower().startswith("aggregates"):
+        text = "It " + text[0].lower() + text[1:]
+    return text
+
+
 @router.post("")
 def chat(req: ChatRequest):
     try:
@@ -406,11 +477,16 @@ def chat(req: ChatRequest):
                 suggestion = (generation.follow_ups or ["Try rephrasing your request", "Switch to Classic Mode"])[0]
                 return _error(summary, suggestion, mode)
 
+            logger.info("AI generated SQL: %s", generation.sql)
             try:
                 validated = sql_validator.validate(generation.sql)
             except Exception as exc:  # pylint: disable=broad-except
-                logger.warning(f"AI SQL rejected: {exc}")
-                return _error(f"Generated SQL was rejected: {exc}", "Try rephrasing your request or switch to Classic Mode.", mode)
+                logger.warning(f"AI SQL rejected: {exc}. SQL=\n{generation.sql}")
+                return _error(
+                    f"Generated SQL was rejected: {exc}",
+                    "Try rephrasing your request or switch to Classic Mode.",
+                    mode,
+                )
 
             exec_start = perf_counter()
             try:
@@ -429,17 +505,35 @@ def chat(req: ChatRequest):
                 },
             ]
 
+            sample_rows = _sample_rows(validated.sql)
             confidence, badges = calculate_confidence(validations, len(rows), validated.tables)
-            followups = generation.follow_ups or get_follow_up_suggestions(validated.tables) or []
-            if not followups:
-                followups = ["Try a more specific question", "Switch back to Classic Mode"]
-            else:
-                followups = list(dict.fromkeys(followups))
+            followups: List[str] = []
+            if rows and validated.tables:
+                primary_table = validated.tables[0]
+                if primary_table == "Inventory":
+                    followups.append("Show this year's revenue by customer")
+                elif primary_table == "Detail":
+                    followups.append("Which items drive the most revenue?")
+                elif primary_table == "Customer":
+                    followups.append("Which customers ordered most this year?")
+            followups = list(dict.fromkeys(followups))[:2]
+            row_count = len(rows)
 
-            if generation.summary:
-                answer = generation.summary.replace("{count}", str(len(rows)))
+            if rows:
+                readable_intro = f"We found {row_count} result{'s' if row_count != 1 else ''} for this question."
             else:
-                answer = f"AI Smart Mode returned {len(rows)} rows." if rows else "AI Smart Mode could not find matching rows."
+                readable_intro = "We couldn't find matching rows for this question."
+
+            sample_text = _summarize_samples(sample_rows, row_count)
+            softened_summary = _soften_summary(generation.summary.replace("{count}", str(row_count)) if generation.summary else "")
+
+            pieces = [readable_intro]
+            if sample_text:
+                pieces.append(sample_text)
+            if rows and softened_summary and softened_summary.lower() not in readable_intro.lower():
+                pieces.append(softened_summary)
+
+            answer = " ".join(piece.strip() for piece in pieces if piece)
 
             return ChatResponse(
                 answer_text=answer,
@@ -455,6 +549,7 @@ def chat(req: ChatRequest):
                 quality_badges=badges,
                 chart=None,
                 query_mode=mode,
+                sample_rows=sample_rows,
             )
         spec = _detect_intent(req.message, req.filters)
         if not spec:
