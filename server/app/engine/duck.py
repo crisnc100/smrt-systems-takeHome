@@ -176,12 +176,13 @@ def _ensure_views_for_connection(con: duckdb.DuckDBPyConnection) -> Dict[str, bo
                 con.execute(f"""
                     CREATE OR REPLACE VIEW {t} AS
                     SELECT
-                        Item_ID as detail_id,
+                        Item_ID as DID,
                         IID,
+                        item_name as product_id,
                         price_table_item_id,
-                        item_count as quantity,
-                        item_baseprice as price,
-                        standardSubtotal as total
+                        item_count as qty,
+                        item_baseprice as unit_price,
+                        standardSubtotal as line_total
                     FROM {raw_view}
                 """)
             elif t == "Pricelist":
@@ -190,8 +191,8 @@ def _ensure_views_for_connection(con: duckdb.DuckDBPyConnection) -> Dict[str, bo
                     CREATE OR REPLACE VIEW {t} AS
                     SELECT
                         item_id as price_table_item_id,
-                        name as item_name,
-                        baseprice as price
+                        name as product_id,
+                        baseprice as unit_price
                     FROM {raw_view}
                 """)
             continue

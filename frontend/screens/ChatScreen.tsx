@@ -16,8 +16,8 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 const MODE_HINT: Record<QueryMode, string> = {
-  classic: 'Classic mode answers supported question patterns with zero risk of hallucination.',
-  ai: 'AI Smart mode lets you phrase questions freely; SQL is generated with guardrails before hitting your data. If you need a deterministic response, switch back to Classic mode in Settings.',
+  classic: 'Classic mode covers the built-in questions we’ve polished.',
+  ai: 'Smart mode understands free-form questions and still checks your data before answering.',
 };
 
 export default function ChatScreen() {
@@ -205,7 +205,7 @@ export default function ChatScreen() {
             />
           </View>
           <HelperText type="info">
-            Try: "Revenue last 30 days", "Top 5 products", "Orders for CID 1001", "Order details 1001". Need a deterministic answer? Toggle Classic mode in Settings.
+            Ask in plain English—switch to Classic mode in Settings if you need one of the preset questions.
           </HelperText>
         </View>
       </View>

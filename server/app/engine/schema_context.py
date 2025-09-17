@@ -58,12 +58,13 @@ TABLE_SCHEMAS: List[TableSchema] = [
         name="Detail",
         description="line items for orders. Links to Inventory via IID and Pricelist via price_table_item_id",
         columns={
-            "detail_id": "integer primary key",
+            "DID": "integer primary key",
             "IID": "order id",
             "price_table_item_id": "foreign key to Pricelist",
-            "quantity": "quantity ordered",
-            "price": "unit price",
-            "total": "line total (quantity * price)",
+            "product_id": "item label",
+            "qty": "quantity ordered",
+            "unit_price": "unit price",
+            "line_total": "line total (qty * unit_price)",
         },
     ),
     TableSchema(
@@ -71,8 +72,8 @@ TABLE_SCHEMAS: List[TableSchema] = [
         description="catalog information for items",
         columns={
             "price_table_item_id": "primary key",
-            "item_name": "item display name",
-            "price": "base or current price",
+            "product_id": "item display name",
+            "unit_price": "base or current price",
         },
     ),
 ]
@@ -115,7 +116,7 @@ AI_USER_PROMPT_TEMPLATE = (
     "Available tables and columns:\n"
     f"{SCHEMA_SUMMARY}\n\n"
     "Active filters (JSON): {filters}\n"
-    "Helpful DuckDB snippets: date_trunc('month', order_date), date_trunc('month', current_date), strftime(order_date, '%Y-%m').\n"
+    "Helpful DuckDB snippets: date_trunc('month', order_date), current_date - INTERVAL '30' DAY, dateadd('day', -7, current_date), strftime(order_date, '%Y-%m').\n"
     "Avoid SQLite-style strftime('now', ...) chains.\n"
     "User question: {question}.\n"
     "Respond with JSON only, no prose."

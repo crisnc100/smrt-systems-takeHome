@@ -55,6 +55,30 @@ def _strip_identifier(value: str) -> str:
     return value
 
 
+def _normalize_functions(candidate: str) -> str:
+    """Apply small rewrites so common vendor SQL works in DuckDB."""
+    def _rewrite_dateadd(match: re.Match) -> str:
+        unit = match.group(1).strip().strip("'\"").upper() or "DAY"
+        amount_raw = match.group(2).strip().strip("'\"")
+        expr = match.group(3).strip()
+        if not re.fullmatch(r"-?\d+", amount_raw):
+            return match.group(0)
+        return f"DATE_ADD({expr}, INTERVAL '{amount_raw}' {unit})"
+
+    candidate = re.sub(
+        r"DATEADD\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*([^)]+?)\)",
+        _rewrite_dateadd,
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(r"\bDATEADD\s*\(", "DATE_ADD(", candidate, flags=re.IGNORECASE)
+    # DuckDB expects quoted units in DATEADD; some models emit DATEADD(day, ...)
+    candidate = re.sub(r"DATE_ADD\(\s*day\s*,", "DATE_ADD('day',", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"DATE_ADD\(\s*month\s*,", "DATE_ADD('month',", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"DATE_ADD\(\s*year\s*,", "DATE_ADD('year',", candidate, flags=re.IGNORECASE)
+    return candidate
+
+
 def validate(sql: str, *, default_limit: int = 200) -> ValidatedSQL:
     """Validate and sanitize LLM generated SQL before execution."""
     if not sql or not sql.strip():
@@ -63,6 +87,8 @@ def validate(sql: str, *, default_limit: int = 200) -> ValidatedSQL:
     candidate = sql.strip()
     if candidate.endswith(";"):
         candidate = candidate[:-1].strip()
+
+    candidate = _normalize_functions(candidate)
 
     for keyword in FORBIDDEN_KEYWORDS:
         if keyword.lower() in candidate.lower():

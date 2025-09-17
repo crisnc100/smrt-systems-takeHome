@@ -177,7 +177,7 @@ export default function SettingsScreen() {
         style={{ marginBottom: 4 }}
       />
       <HelperText type="info">
-        Classic uses pattern-matched queries; AI Smart lets an LLM generate SQL with guardrails.
+        Classic answers the preset questions. Smart understands natural language and still verifies everything against your data.
       </HelperText>
       <TextInput label="API Base URL" value={url} onChangeText={setUrl} mode="outlined" />
       <HelperText type="info">Default: http://localhost:8000</HelperText>
@@ -203,39 +203,91 @@ export default function SettingsScreen() {
           {(() => {
             const rows: { label: string; ok: boolean; detail?: string }[] = [];
             const r = checkResult || {};
-            const isErr = (v: any) => typeof v === 'string' && v.startsWith('ERROR');
-            
-            // Total revenue (dynamic date range)
-            if (r.total_revenue) {
-              const revenue = r.total_revenue;
-              const label = revenue.date_range ? `Revenue ${revenue.date_range}` : 'Total Revenue';
-              const detail = revenue.amount ? `$${revenue.amount.toFixed(2)}` : String(revenue);
-              rows.push({ label, ok: !isErr(revenue), detail });
+            const isErrorValue = (v: any) => typeof v === 'string' && v.startsWith('ERROR');
+
+            // Revenue last 30 days
+            if (r.revenue_last_30_days) {
+              const revenue = r.revenue_last_30_days;
+              if (!isErrorValue(revenue) && typeof revenue === 'object') {
+                const amount = typeof revenue.amount === 'number' ? `$${revenue.amount.toFixed(2)}` : '—';
+                const orders = typeof revenue.orders === 'number' ? `${revenue.orders} orders` : '';
+                rows.push({
+                  label: 'Revenue last 30 days',
+                  ok: true,
+                  detail: `${amount} (${revenue.start} → ${revenue.end}${orders ? `, ${orders}` : ''})`,
+                });
+              } else {
+                rows.push({
+                  label: 'Revenue last 30 days',
+                  ok: false,
+                  detail: typeof revenue === 'string' ? revenue : 'No data',
+                });
+              }
             }
-            
-            // Top 5 Products
-            rows.push({ label: 'Top 5 Products', ok: !isErr(r.top_5_products), detail: Array.isArray(r.top_5_products) ? `${r.top_5_products.length} items` : String(r.top_5_products) });
-            
-            // Dynamic Orders (find key that starts with orders_cid_)
+
+            // Top 5 products
+            if (r.top_products) {
+              rows.push({
+                label: 'Top 5 products',
+                ok: !isErrorValue(r.top_products),
+                detail: Array.isArray(r.top_products) ? `${r.top_products.length} items` : String(r.top_products),
+              });
+            }
+
+            // Top customers
+            if (r.top_customers) {
+              rows.push({
+                label: 'Top customers',
+                ok: !isErrorValue(r.top_customers),
+                detail: Array.isArray(r.top_customers) ? `${r.top_customers.length} customers` : String(r.top_customers),
+              });
+            }
+
+            // Orders for sample CID
             const ordersKey = Object.keys(r).find(k => k.startsWith('orders_cid_'));
             if (ordersKey) {
               const cid = ordersKey.replace('orders_cid_', '');
               const orders = r[ordersKey];
-              rows.push({ label: `Orders CID ${cid}`, ok: !isErr(orders), detail: Array.isArray(orders) ? `${orders.length} orders` : String(orders) });
+              rows.push({
+                label: `Orders CID ${cid}`,
+                ok: !isErrorValue(orders),
+                detail: Array.isArray(orders) ? `${orders.length} orders` : String(orders),
+              });
+            } else if (r.orders_sample) {
+              rows.push({
+                label: 'Orders sample',
+                ok: !isErrorValue(r.orders_sample),
+                detail: String(r.orders_sample),
+              });
             }
-            
-            // Dynamic Details (find key that starts with details_iid_)
+
+            // Details for sample IID
             const detailsKey = Object.keys(r).find(k => k.startsWith('details_iid_'));
             if (detailsKey) {
               const iid = detailsKey.replace('details_iid_', '');
               const details = r[detailsKey];
-              rows.push({ label: `Details IID ${iid}`, ok: !isErr(details), detail: Array.isArray(details) ? `${details.length} lines` : String(details) });
+              rows.push({
+                label: `Details IID ${iid}`,
+                ok: !isErrorValue(details),
+                detail: Array.isArray(details) ? `${details.length} lines` : String(details),
+              });
+            } else if (r.details_sample) {
+              rows.push({
+                label: 'Details sample',
+                ok: !isErrorValue(r.details_sample),
+                detail: String(r.details_sample),
+              });
             }
+
             return rows.map((row, idx) => (
-              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+              <View key={idx} style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 6, flexWrap: 'wrap' }}>
                 <Text style={{ width: 160 }}>{row.label}</Text>
                 <Text style={{ color: row.ok ? 'green' : 'red', marginLeft: 8 }}>{row.ok ? 'PASS' : 'FAIL'}</Text>
-                {row.detail && <Text style={{ marginLeft: 12, opacity: 0.7 }}>{row.detail}</Text>}
+                {row.detail && (
+                  <Text style={{ marginLeft: 12, opacity: 0.7, flexShrink: 1, flexBasis: '60%' }}>
+                    {row.detail}
+                  </Text>
+                )}
               </View>
             ));
           })()}
